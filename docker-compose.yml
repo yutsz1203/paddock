@@ -1,0 +1,25 @@
+# Local development stack. The api and ui services join in Phase 5 (T24), when the
+# same file is what runs on the Oracle instance — local and production stay identical,
+# so anything reproducible here is reproducible there.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: paddock
+      POSTGRES_PASSWORD: paddock
+      POSTGRES_DB: paddock
+    ports:
+      # Host port 55432 to avoid colliding with other local Postgres instances.
+      # Inside the compose network the port is still 5432.
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paddock -d paddock"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

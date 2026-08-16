@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: paddock
+          POSTGRES_PASSWORD: paddock
+          POSTGRES_DB: paddock
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U paddock -d paddock"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --all-extras --dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy src/
+
+      # -m 'not live' is the pytest default (see pyproject.toml): CI never touches
+      # racing.hkjc.com. Parsers are tested against committed HTML fixtures instead,
+      # so a CI failure always means our code changed, never that HKJC did.
+      - name: Test
+        run: uv run pytest
+        env:
+          DATABASE_URL: postgresql+psycopg://paddock:paddock@localhost:5432/paddock
