@@ -61,8 +61,8 @@ class ResultRunner:
     """HKJC's stable identifier, read from the row's link."""
     jockey: str
     trainer: str
-    actual_weight: int | None
-    declared_weight: int | None
+    carried_weight_lb: int | None
+    declared_horse_weight_lb: int | None
     draw: int | None
     margin: float | None
     running_positions: list[int]
@@ -236,8 +236,8 @@ def _parse_runner(row: Tag) -> ResultRunner | None:
         horse_id=_horse_id_from(tds[2]),
         jockey=jockey,
         trainer=trainer,
-        actual_weight=as_int(act_wt),
-        declared_weight=as_int(decl_wt),
+        carried_weight_lb=as_int(act_wt),
+        declared_horse_weight_lb=as_int(decl_wt),
         draw=as_int(draw),
         # A non-finisher has no margin at all; the winner's '---' means zero.
         margin=parse_margin(lbw) if finished else None,

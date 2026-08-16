@@ -74,3 +74,20 @@ def test_claimed_and_unclaimed_forms_normalise_together() -> None:
 
 def test_chinese_names_pass_through_unchanged() -> None:
     assert normalise_person_name("潘頓") == "潘頓"
+
+
+# ── Weight claims as data ───────────────────────────────────────────────────────
+
+# The claim is not part of the rider's identity, but it *is* part of the ride:
+# allotted weight = carried weight + claim, and "ridden by a 10 lb claimer" is a
+# signal in its own right. Stripping it from the name must not discard it.
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("Y L Chung (-2)", 2), ("P N Wong (-7)", 7), ("H Y Yuen (-10)", 10), ("Z Purton", 0)],
+)
+def test_weight_claim_is_captured_not_just_removed(raw: str, expected: int) -> None:
+    from paddock.ingest.entities import parse_weight_claim
+
+    assert parse_weight_claim(raw) == expected

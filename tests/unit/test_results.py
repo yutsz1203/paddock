@@ -76,8 +76,8 @@ def test_winner_fields(race1) -> None:  # type: ignore[no-untyped-def]
     assert winner.horse_no == 13
     assert winner.jockey == "Z Purton"
     assert winner.trainer == "C S Shum"
-    assert winner.actual_weight == 122
-    assert winner.declared_weight == 1133
+    assert winner.carried_weight_lb == 122
+    assert winner.declared_horse_weight_lb == 1133
     assert winner.draw == 8
     assert winner.win_odds == pytest.approx(3.3)
 

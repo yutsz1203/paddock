@@ -43,7 +43,7 @@ from paddock.db.models import Horse, HorseAlias, Jockey, Trainer
 _HORSE_ID = re.compile(r"^HK_\d{4}_[A-Z]\d{3}$")
 
 # "(-2)", "(-10)" — the apprentice's weight allowance for that ride.
-_WEIGHT_CLAIM = re.compile(r"\s*\(-\d+\)\s*$")
+_WEIGHT_CLAIM = re.compile(r"\s*\(-(\d+)\)\s*$")
 
 
 def parse_horse_id(href: str) -> str | None:
@@ -66,6 +66,24 @@ def parse_horse_id(href: str) -> str | None:
 def normalise_person_name(name: str) -> str:
     """Strip an apprentice's weight claim and surrounding whitespace."""
     return _WEIGHT_CLAIM.sub("", name.strip()).strip()
+
+
+def parse_weight_claim(name: str) -> int:
+    """Return the apprentice allowance in pounds, or 0 for a senior rider.
+
+    Carried weight on the results page is already net of this, so the claim is the
+    only route back to the weight the handicapper allotted:
+
+        allotted = carried + claim
+
+    It is also a feature in its own right — a 10 lb claimer and a champion jockey at
+    the same weight are not the same proposition — so it is stored on the runner
+    rather than discarded with the name.
+    """
+    match = _WEIGHT_CLAIM.search(name.strip())
+    if match is None:
+        return 0
+    return int(match.group(1))
 
 
 def resolve_horse(

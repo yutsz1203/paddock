@@ -174,8 +174,19 @@ class Runner(Base):
     draw: Mapped[int | None]
     jockey_id: Mapped[int | None] = mapped_column(ForeignKey("jockeys.id"))
     trainer_id: Mapped[int | None] = mapped_column(ForeignKey("trainers.id"))
-    weight: Mapped[int | None]
-    actual_weight: Mapped[int | None]
+
+    # Two different quantities that were previously named 'weight' and
+    # 'actual_weight' — an invitation to confuse them. One is what the horse
+    # carries (~122 lb), the other is the horse's own body weight (~1133 lb).
+    carried_weight_lb: Mapped[int | None]
+    declared_horse_weight_lb: Mapped[int | None]
+
+    # Carried weight is already net of an apprentice's allowance, so this is the
+    # only route back to the weight the handicapper allotted:
+    #     allotted = carried_weight_lb + jockey_claim
+    # It is also a feature in its own right for a future model.
+    jockey_claim: Mapped[int] = mapped_column(default=0)
+
     rating: Mapped[int | None]
     scratched: Mapped[bool] = mapped_column(default=False)
 

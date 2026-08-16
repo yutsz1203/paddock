@@ -37,7 +37,7 @@ from dataclasses import dataclass
 
 from bs4 import BeautifulSoup, Tag
 
-from paddock.ingest.entities import parse_horse_id
+from paddock.ingest.entities import normalise_person_name, parse_horse_id, parse_weight_claim
 
 # "Race:1 (634) FWD INSURANCE ACT PRIVATE HANDICAP (Sec2) Class 4 1200 m"
 _RACE_NO = re.compile(r"Race:\s*(\d+)")
@@ -64,6 +64,8 @@ class RunnerReport:
     horse_no: int | None
     draw: int | None
     jockey: str
+    jockey_claim: int
+    """Apprentice allowance in pounds for this ride, 0 for a senior rider."""
     finish_pos: int | None
     dead_heat: bool
     finished: bool
@@ -177,7 +179,8 @@ def _parse_runner_row(row: Tag) -> RunnerReport | None:
         horse_id=_horse_id_from(tds[3]),
         horse_no=_as_int(horse_no),
         draw=_as_int(draw),
-        jockey=jockey,
+        jockey=normalise_person_name(jockey),
+        jockey_claim=parse_weight_claim(jockey),
         finish_pos=finish_pos,
         dead_heat=dead_heat,
         finished=finished,

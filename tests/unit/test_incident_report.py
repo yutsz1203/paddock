@@ -213,3 +213,29 @@ def test_every_runner_carries_a_horse_id(current_season) -> None:  # type: ignor
         for runner in race.runners:
             assert runner.horse_id is not None
             assert runner.horse_id.endswith(runner.brand_no), "id and text must agree"
+
+
+# ── Jockey claims ───────────────────────────────────────────────────────────────
+
+
+def test_jockey_claim_is_kept_as_a_number(current_season) -> None:  # type: ignore[no-untyped-def]
+    """Carried weight is already net of the claim, so the claim is the only way
+    back to the weight the handicapper actually allotted."""
+    race1 = current_season.races[0]
+    claimer = next(r for r in race1.runners if r.brand_no == "L194")
+
+    assert claimer.jockey == "H Y Yuen", "the claim does not belong in the name"
+    assert claimer.jockey_claim == 10
+
+
+def test_senior_jockey_has_no_claim(current_season) -> None:  # type: ignore[no-untyped-def]
+    winner = next(r for r in current_season.races[0].runners if r.brand_no == "K570")
+
+    assert winner.jockey == "Z Purton"
+    assert winner.jockey_claim == 0
+
+
+def test_no_jockey_name_retains_a_claim_suffix(current_season) -> None:  # type: ignore[no-untyped-def]
+    for race in current_season.races:
+        for runner in race.runners:
+            assert "(-" not in runner.jockey

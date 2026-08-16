@@ -92,3 +92,21 @@ def test_result_columns_are_nullable() -> None:
 
     for column in ("finish_pos", "finish_time_s", "margin", "win_odds"):
         assert columns[column]["nullable"], f"{column} must be nullable for declared races"
+
+
+def test_runner_weight_columns_are_unambiguous() -> None:
+    """Carried weight (~122 lb) and horse body weight (~1133 lb) are different
+    quantities; the old 'weight'/'actual_weight' pair invited confusing them."""
+    columns = {c["name"] for c in inspect(get_engine()).get_columns("runners")}
+
+    assert {"carried_weight_lb", "declared_horse_weight_lb", "jockey_claim"} <= columns
+    assert not {"weight", "actual_weight"} & columns
+
+
+def test_jockey_claim_defaults_to_zero() -> None:
+    """Carried weight is already net of the claim, so 0 means a senior rider."""
+    columns = {c["name"]: c for c in inspect(get_engine()).get_columns("runners")}
+    claim = columns["jockey_claim"]
+
+    assert not claim["nullable"]
+    assert claim["default"] is not None, "needs a server default to be safe on a populated table"
