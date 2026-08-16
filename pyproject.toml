@@ -82,6 +82,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# So `tests.doubles` is importable from any test module. The doubles live under
+# tests/ rather than src/ so that nothing in production can import a fake LLM.
+pythonpath = ["."]
 markers = [
     "integration: requires a running Postgres (deselect with '-m \"not integration\"')",
     "live: hits racing.hkjc.com — never runs in CI",

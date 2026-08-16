@@ -40,10 +40,10 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, literal, or_, select
 from sqlalchemy.orm import Session, aliased
 
-from paddock.db.models import Jockey, Meeting, Race, Runner, Trainer
+from paddock.db.models import Horse, HorseAlias, Jockey, Meeting, Race, Runner, Trainer
 
 MAX_RUNS = 50
 """A hard ceiling on any one call. The agent chooses `n`, and an unbounded `n` from a
@@ -147,3 +147,68 @@ def _form_query(horse_id: str) -> Select[tuple[Runner, Race, Meeting, str | None
         )
         .order_by(Meeting.race_date.desc(), Race.race_no.desc())
     )
+
+
+@dataclass(frozen=True)
+class HorseMatch:
+    """A horse named in a question, and the name that matched."""
+
+    horse_id: str
+    matched_name: str
+    name_en: str | None
+    name_zh: str | None
+
+
+def find_horse(session: Session, question: str) -> HorseMatch | None:
+    """Find the horse a question is about, by matching known names against the text.
+
+    The direction is deliberately backwards from the obvious one. Extracting a name
+    from free text needs a tokeniser that works in English and Chinese and knows that
+    "GOLDEN SIXTY" is one name and "last start" is not. Asking the database which of
+    its ~1,500 known names appears in this sentence needs no tokeniser at all, works
+    in both languages, and can only ever return a horse that exists.
+
+    Former names are matched too — HK horses are renamed mid-career, and a question
+    asked with last season's name must not come back "no such horse" (T6).
+
+    The longest match wins, so "TESTBRED FLYER" is preferred over a horse called
+    "FLYER". That is the whole disambiguation: two horses whose names both appear in
+    one sentence is a case for the full router (T16), not for this.
+    """
+    text = question.strip()
+    if not text:
+        return None
+
+    asked = literal(text)
+    current = session.execute(
+        select(Horse.horse_id, Horse.name_en, Horse.name_zh).where(
+            or_(
+                Horse.name_en.is_not(None) & asked.ilike(func.concat("%", Horse.name_en, "%")),
+                Horse.name_zh.is_not(None) & asked.ilike(func.concat("%", Horse.name_zh, "%")),
+            )
+        )
+    ).all()
+    former = session.execute(
+        select(Horse.horse_id, Horse.name_en, Horse.name_zh, HorseAlias.name)
+        .join(Horse, Horse.horse_id == HorseAlias.horse_id)
+        .where(asked.ilike(func.concat("%", HorseAlias.name, "%")))
+    ).all()
+
+    # Postgres decided *whether* each row matches; this decides *which* name did, so
+    # that the longest match can win. It runs over the handful of rows already
+    # returned, not over the horses table.
+    lowered = text.lower()
+    candidates = [
+        HorseMatch(horse_id=horse_id, matched_name=name, name_en=name_en, name_zh=name_zh)
+        for horse_id, name_en, name_zh in current
+        for name in (name_en, name_zh)
+        if name and name.lower() in lowered
+    ]
+    candidates += [
+        HorseMatch(horse_id=horse_id, matched_name=alias, name_en=name_en, name_zh=name_zh)
+        for horse_id, name_en, name_zh, alias in former
+    ]
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda match: len(match.matched_name))
