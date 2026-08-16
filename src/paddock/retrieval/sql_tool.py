@@ -74,6 +74,12 @@ class RunLine:
     win_odds: float | None
     finish_time_s: float | None
 
+    # How the race was run, not just how it ended. Section count varies with
+    # distance (3 at 1000m, 6 at 2400m), so these are arrays rather than fixed
+    # columns — see the note on `Runner`.
+    sectional_times: list[float] | None
+    sectional_positions: list[int] | None
+
 
 def recent_runs(session: Session, *, horse_id: str, n: int = 5) -> list[RunLine]:
     """The horse's last `n` completed runs, newest first.
@@ -110,6 +116,8 @@ def recent_runs(session: Session, *, horse_id: str, n: int = 5) -> list[RunLine]
             margin=runner.margin,
             win_odds=runner.win_odds,
             finish_time_s=runner.finish_time_s,
+            sectional_times=runner.sectional_times,
+            sectional_positions=runner.sectional_positions,
         )
         for runner, race, meeting, jockey_name, trainer_name, field_size in rows
     ]

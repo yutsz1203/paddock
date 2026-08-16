@@ -161,6 +161,8 @@ def _seed_form() -> None:
                     finish_time_s=69.5 + index,
                     margin=float(index),
                     win_odds=4.5 + index,
+                    sectional_times=[24.01, 22.09, 22.86],
+                    sectional_positions=[7, 6, 4],
                 )
             )
             # A rival, so field size is not trivially 1.
@@ -222,6 +224,22 @@ def test_recent_runs_carries_the_form_line() -> None:
     assert run.trainer == "Z Testhandler"
     assert run.finish_pos == 6
     assert run.win_odds == pytest.approx(9.5)
+
+
+def test_recent_runs_carries_the_sectionals() -> None:
+    """How the race was run, not just how it ended.
+
+    "Won by a length" and "won by a length after being last at the 800" are
+    different form lines, and only the sectionals separate them. They are stored on
+    the runner (T2) and parsed in T5 — a form query that leaves them in the row is
+    the reason an answer can describe a win without describing the run."""
+    _seed_form()
+
+    with session_scope() as session:
+        run = recent_runs(session, horse_id=TARGET, n=1)[0]
+
+    assert run.sectional_times == [24.01, 22.09, 22.86]
+    assert run.sectional_positions == [7, 6, 4]
 
 
 def test_recent_runs_reports_the_field_size() -> None:

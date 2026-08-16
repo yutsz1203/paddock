@@ -350,8 +350,22 @@ def _describe_run(run: RunLine, horse: str) -> str:
         f"carried {run.carried_weight_lb}lb" if run.carried_weight_lb else None,
         f"jockey {run.jockey}" if run.jockey else None,
         f"SP {run.win_odds}" if run.win_odds else None,
+        # Where the horse was at each section, and how long the trip took. A
+        # placing says how the run ended; these say how it was run, which is the
+        # half a race morning actually acts on.
+        _sections("running", run.sectional_positions),
+        _sections("sections", run.sectional_times, unit="s"),
+        f"time {run.finish_time_s:.2f}s" if run.finish_time_s else None,
     ]
     return ", ".join(part for part in parts if part)
+
+
+def _sections(label: str, values: list[float] | list[int] | None, *, unit: str = "") -> str | None:
+    """``running 7-6-4`` — the form-guide shape, so the model quotes it as one fact
+    rather than reformatting three numbers into a sentence of its own."""
+    if not values:
+        return None
+    return f"{label} " + "-".join(f"{v}{unit}" for v in values)
 
 
 def _describe_hit(hit: CommentHit, horse: str) -> str:

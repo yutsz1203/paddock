@@ -138,8 +138,11 @@ def _seed() -> StubEmbedder:
                 draw=3,
                 carried_weight_lb=126,
                 finish_pos=6,
+                finish_time_s=69.42,
                 margin=4.25,
                 win_odds=7.5,
+                sectional_times=[24.01, 22.09, 22.86],
+                sectional_positions=[7, 6, 4],
             )
         )
         session.add(Runner(race_id=race.id, horse_id=rival, horse_no=2, finish_pos=1))
@@ -437,3 +440,29 @@ def test_the_evidence_block_names_the_horse_it_is_about() -> None:
     evidence = prompt.split("Question:")[0]
 
     assert NAME_EN in evidence
+
+
+def test_the_form_line_says_how_the_race_was_run() -> None:
+    """A placing is the end of a run, not the run.
+
+    Sectionals are where a form line stops being a scoreboard: "sixth, 4.25L" and
+    "sixth after leading to the 400" are different propositions, and the horse's
+    position at each section is exactly what a race morning needs. They are on the
+    runner already — a form line that omits them makes the model describe a result
+    it cannot explain.
+    """
+    embedder = _seed()
+    llm = ScriptedLLM(CITED)
+
+    with session_scope() as session:
+        answer_question(
+            session,
+            question=f"How did {NAME_EN} perform in its last start?",
+            llm=llm,
+            embedder=embedder,
+        )
+
+    evidence = next(p for p in llm.prompts if "finished 6 of 2" in p).split("Question:")[0]
+
+    assert "7-6-4" in evidence  # running position at each section
+    assert "69.42" in evidence  # and the time it was already carrying
