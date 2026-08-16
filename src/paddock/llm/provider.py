@@ -99,9 +99,30 @@ class OpenAICompatibleLLM:
 
 
 class AnthropicLLM:
-    """Anthropic's own dialect — system prompt is a parameter, not a message."""
+    """Anthropic's own dialect — system prompt is a parameter, not a message.
+
+    Two differences from the OpenAI-compatible path, both load-bearing on the
+    current models:
+
+    **No `temperature`.** Sampling parameters were removed on Claude Opus 5 and the
+    4.7/4.8 family — sending one is a 400, not a soft ignore. Determinism comes from
+    the prompt instead, which is where it should have come from anyway: temperature 0
+    never guaranteed identical outputs.
+
+    **Thinking is on by default and shares the token budget.** `max_tokens` caps
+    thinking *plus* the answer, so a budget sized for two cited sentences truncates
+    mid-answer. Hence a generous ceiling and `effort: "low"` — a form question is a
+    lookup over evidence we already retrieved, not a reasoning problem, and low
+    effort on these models is strong enough for it. Disabling thinking outright is
+    the tempting alternative and is a trap: it makes the model leak `<thinking>`
+    tags into the visible response, which the citation check would then reject as an
+    uncited sentence.
+    """
 
     name = "anthropic"
+
+    MAX_TOKENS = 8192
+    """Thinking and answer together. Answers are short; the headroom is for thinking."""
 
     def __init__(self, *, model: str, api_key: str) -> None:
         self.model = model
@@ -120,11 +141,13 @@ class AnthropicLLM:
         turns = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
         with self._client.messages.stream(
             model=self.model,
-            max_tokens=1024,
-            temperature=0.0,
+            max_tokens=self.MAX_TOKENS,
+            output_config={"effort": "low"},
             system=system,
             messages=turns,  # type: ignore[arg-type]
         ) as stream:
+            # Text only — thinking blocks stream with empty text under the default
+            # `display: "omitted"`, so nothing internal reaches the citation check.
             yield from stream.text_stream
 
 
@@ -153,12 +176,17 @@ def build_llm(settings: Settings) -> OpenAICompatibleLLM | AnthropicLLM:
 
 def _require_key(settings: Settings, provider: LLMProvider) -> str:
     secret: SecretStr | None = getattr(settings, f"{provider}_api_key", None)
-    if secret is None:
+    # Blank counts as missing. `.env.example` ships every key as `NAME=` with no
+    # value, so present-but-empty is what "not configured yet" actually looks like —
+    # and letting it through turns a startup error into `Missing credentials` raised
+    # from inside a half-open SSE stream, naming neither the variable nor the file.
+    key = secret.get_secret_value().strip() if secret is not None else ""
+    if not key:
         raise ValueError(
             f"{provider.upper()}_API_KEY is not set, but LLM_PROVIDER={provider}. "
             "Set it in .env, or switch provider."
         )
-    return secret.get_secret_value()
+    return key
 
 
 @lru_cache(maxsize=1)

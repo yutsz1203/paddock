@@ -66,3 +66,12 @@ def test_a_missing_key_fails_at_startup_with_a_usable_message() -> None:
     """Not at the first question, and not as a 401 three seconds into a stream."""
     with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
         build_llm(Settings(llm_provider="deepseek", deepseek_api_key=None))
+
+
+def test_a_blank_key_counts_as_missing() -> None:
+    """`.env.example` ships `DEEPSEEK_API_KEY=` with no value, so present-but-empty
+    is the normal shape of "not configured yet" — and it has to fail here, loudly.
+    Passing it through instead surfaces as `OpenAIError: Missing credentials` from
+    inside a half-open SSE stream, which names neither the variable nor the file."""
+    with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
+        build_llm(Settings(llm_provider="deepseek", deepseek_api_key=""))

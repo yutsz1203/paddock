@@ -374,14 +374,28 @@ def test_metadata_filtering_happens_before_the_ann_scan() -> None:
 
 
 def test_filters_combine() -> None:
+    """`since` is here to scope the assertion to this test's own rows, not for its
+    own sake: 1200m is the commonest HK distance, so any real meeting seeded into
+    the same database would otherwise be counted. Combining three filters is the
+    point anyway — a question is usually "this horse, this distance, this season"."""
     embedder = _seed_comments()
 
     with session_scope() as session:
         matching = search_comments(
-            session, query=QUERY, embedder=embedder, distance_m=1200, limit=10
+            session,
+            query=QUERY,
+            embedder=embedder,
+            distance_m=1200,
+            since=SEASON_START,
+            limit=10,
         )
         wrong_distance = search_comments(
-            session, query=QUERY, embedder=embedder, distance_m=2000, limit=10
+            session,
+            query=QUERY,
+            embedder=embedder,
+            distance_m=2000,
+            since=SEASON_START,
+            limit=10,
         )
 
     assert len(matching) == 8

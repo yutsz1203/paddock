@@ -408,3 +408,32 @@ def test_an_empty_question_is_refused() -> None:
 
     with session_scope() as session, pytest.raises(ValueError, match="question"):
         answer_question(session, question="   ", llm=ScriptedLLM(CITED), embedder=embedder)
+
+
+def test_the_evidence_block_names_the_horse_it_is_about() -> None:
+    """Retrieval knows which horse a comment belongs to; the prompt has to say so.
+
+    The metadata filter identifies the horse for the *scan*, and it is tempting to
+    conclude the text need not repeat it. That holds for retrieval and fails for
+    synthesis: a stewards' comment reads "Jumped only fairly and made contact with
+    PACKING KING", naming another runner and never its own subject. Handed that with
+    no attribution, a good model refuses to answer — correctly — and the whole
+    pipeline reports "no evidence" while holding the evidence.
+    """
+    embedder = _seed()
+    llm = ScriptedLLM(CITED)
+
+    with session_scope() as session:
+        answer_question(
+            session,
+            question=f"Did {NAME_EN} have any trouble in running?",
+            llm=llm,
+            embedder=embedder,
+        )
+
+    # Split off the question — the horse name appears there too, and a prompt that
+    # only names it in the question is exactly the broken case.
+    prompt = next(p for p in llm.prompts if TROUBLE in p)
+    evidence = prompt.split("Question:")[0]
+
+    assert NAME_EN in evidence

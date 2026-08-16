@@ -278,10 +278,19 @@ def _retrieve(session: Session, embedder: Embedder, state: _State) -> _State:
             if hit.distance <= MAX_DISTANCE
         ]
 
+    # The subject of the evidence, spelled out. Retrieval knew which horse these
+    # rows belong to — the filter is how they were found — but the model reads only
+    # the text, and a stewards' comment routinely names *another* runner and never
+    # its own subject. Without this the model correctly refuses to attribute the
+    # evidence, and the pipeline reports "no evidence" while holding the evidence.
+    horse = state.get("horse_name") or horse_id
+
     items: list[tuple[SourceKind, str, str]] = [
-        ("run", _describe_run(run), f"race:{run.race_id}") for run in runs
+        ("run", _describe_run(run, horse), f"race:{run.race_id}") for run in runs
     ]
-    items += [("comment", _describe_hit(hit), f"incident_comment:{hit.comment_id}") for hit in hits]
+    items += [
+        ("comment", _describe_hit(hit, horse), f"incident_comment:{hit.comment_id}") for hit in hits
+    ]
 
     return {"sources": number_sources(items)}
 
@@ -320,7 +329,7 @@ def _abstain(state: _State) -> _State:
 # ── Formatting evidence ─────────────────────────────────────────────────────────
 
 
-def _describe_run(run: RunLine) -> str:
+def _describe_run(run: RunLine, horse: str) -> str:
     """A form line as one sentence, because the model quotes it as one.
 
     Everything a reader needs to check the claim is here — the date and venue locate
@@ -328,6 +337,7 @@ def _describe_run(run: RunLine) -> str:
     from the citation alone.
     """
     parts = [
+        horse,
         run.race_date.isoformat(),
         run.racecourse,
         f"R{run.race_no}",
@@ -344,10 +354,11 @@ def _describe_run(run: RunLine) -> str:
     return ", ".join(part for part in parts if part)
 
 
-def _describe_hit(hit: CommentHit) -> str:
-    """The stewards' words, with just enough context to place them."""
+def _describe_hit(hit: CommentHit, horse: str) -> str:
+    """The stewards' words, with just enough context to place them — and to say who
+    they are about, which the comment text itself usually does not."""
     where = f"{hit.race_date.isoformat()} {hit.racecourse} R{hit.race_no}"
-    return f"Stewards' report, {where}: {hit.text}"
+    return f"Stewards' report on {horse}, {where}: {hit.text}"
 
 
 def _mentions_a_distance(question: str) -> bool:
