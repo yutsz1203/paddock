@@ -85,5 +85,9 @@ testpaths = ["tests"]
 markers = [
     "integration: requires a running Postgres (deselect with '-m \"not integration\"')",
     "live: hits racing.hkjc.com — never runs in CI",
+    "model: loads bge-m3 (~2.2 GB download) — run locally with '-m model'",
 ]
-addopts = "-m 'not live'"
+# `model` is excluded by default for the same reason as `live`: it needs a 2.2 GB
+# download from Hugging Face, which would make every CI run depend on a third party
+# being up. Run it locally after touching anything in `paddock.embed`.
+addopts = "-m 'not live and not model'"

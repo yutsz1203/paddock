@@ -1,4 +1,4 @@
-.PHONY: help install up down db lint typecheck test test-unit check
+.PHONY: help install up down db lint typecheck test test-unit test-model check
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -29,5 +29,12 @@ test-unit:  ## Unit tests only (no database)
 
 test:  ## All tests (requires Postgres)
 	uv run pytest
+
+# Deselected by default so CI never depends on Hugging Face being up. Run this
+# after touching anything in paddock/embed — it is the only proof that a Chinese
+# query finds its English source, which is the whole reason for bge-m3.
+test-model:  ## Embedding tests against the real bge-m3 (~2.2 GB download)
+	uv sync --extra embed
+	uv run pytest -m model
 
 check: lint typecheck test  ## Everything
