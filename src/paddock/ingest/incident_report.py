@@ -37,6 +37,8 @@ from dataclasses import dataclass
 
 from bs4 import BeautifulSoup, Tag
 
+from paddock.ingest.entities import parse_horse_id
+
 # "Race:1 (634) FWD INSURANCE ACT PRIVATE HANDICAP (Sec2) Class 4 1200 m"
 _RACE_NO = re.compile(r"Race:\s*(\d+)")
 _RACE_CLASS = re.compile(r"\b(Class\s+\d+|Group\s+(?:One|Two|Three)|Griffin|Restricted)\b", re.I)
@@ -56,6 +58,9 @@ class RunnerReport:
 
     horse_name: str
     brand_no: str
+    horse_id: str | None
+    """HKJC's stable identifier, read from the row's link. The visible text gives
+    only the brand number, which lacks the import year."""
     horse_no: int | None
     draw: int | None
     jockey: str
@@ -157,7 +162,8 @@ def _race_name(header: str) -> str | None:
 
 
 def _parse_runner_row(row: Tag) -> RunnerReport | None:
-    cells = [cell.get_text(" ", strip=True) for cell in row.find_all("td")]
+    tds = row.find_all("td")
+    cells = [cell.get_text(" ", strip=True) for cell in tds]
     if len(cells) < 7:
         return None  # spacer or malformed row
 
@@ -168,6 +174,7 @@ def _parse_runner_row(row: Tag) -> RunnerReport | None:
     return RunnerReport(
         horse_name=name,
         brand_no=brand_no,
+        horse_id=_horse_id_from(tds[3]),
         horse_no=_as_int(horse_no),
         draw=_as_int(draw),
         jockey=jockey,
@@ -176,6 +183,15 @@ def _parse_runner_row(row: Tag) -> RunnerReport | None:
         finished=finished,
         comment=_clean_comment(incident),
     )
+
+
+def _horse_id_from(cell: Tag) -> str | None:
+    """Read HK_YYYY_Bxxx from the horse cell's link, if it has one."""
+    link = cell.find("a")
+    if not isinstance(link, Tag):
+        return None
+    href = link.get("href")
+    return parse_horse_id(href) if isinstance(href, str) else None
 
 
 def _split_name_and_brand(cell: str) -> tuple[str, str]:

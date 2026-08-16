@@ -195,3 +195,21 @@ def test_no_fixture_leaks_the_no_report_sentinel(
     for race in report.races:
         for runner in race.runners:
             assert runner.comment is None or "No report" not in runner.comment
+
+
+# ── Horse identity ──────────────────────────────────────────────────────────────
+
+
+def test_horse_id_is_read_from_the_row_link(current_season) -> None:  # type: ignore[no-untyped-def]
+    """The visible text gives a brand number; only the link gives the import year."""
+    runner = current_season.races[0].runners[0]
+
+    assert runner.horse_id == "HK_2025_L133"
+    assert runner.horse_id.endswith(runner.brand_no)
+
+
+def test_every_runner_carries_a_horse_id(current_season) -> None:  # type: ignore[no-untyped-def]
+    for race in current_season.races:
+        for runner in race.runners:
+            assert runner.horse_id is not None
+            assert runner.horse_id.endswith(runner.brand_no), "id and text must agree"

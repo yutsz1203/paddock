@@ -150,3 +150,19 @@ def test_every_runner_can_be_joined(race1) -> None:  # type: ignore[no-untyped-d
         assert runner.brand_no
         assert runner.horse_name
         assert "(" not in runner.horse_name
+
+
+# ── Horse identity ──────────────────────────────────────────────────────────────
+
+
+def test_horse_id_is_read_from_the_row_link(race1) -> None:  # type: ignore[no-untyped-def]
+    winner = race1.runners[0]
+
+    assert winner.horse_id == "HK_2024_K570"
+    assert winner.horse_id.endswith(winner.brand_no)
+
+
+def test_every_runner_carries_a_horse_id(race1) -> None:  # type: ignore[no-untyped-def]
+    for runner in race1.runners:
+        assert runner.horse_id is not None
+        assert runner.horse_id.endswith(runner.brand_no)

@@ -31,6 +31,7 @@ from typing import cast
 
 from bs4 import BeautifulSoup, Tag
 
+from paddock.ingest.entities import parse_horse_id
 from paddock.ingest.values import (
     as_float,
     as_int,
@@ -56,6 +57,8 @@ class ResultRunner:
     horse_no: int | None
     horse_name: str
     brand_no: str
+    horse_id: str | None
+    """HKJC's stable identifier, read from the row's link."""
     jockey: str
     trainer: str
     actual_weight: int | None
@@ -212,7 +215,8 @@ def _parse_header(table: Tag) -> RaceHeader:
 
 
 def _parse_runner(row: Tag) -> ResultRunner | None:
-    cells = [cell.get_text(" ", strip=True) for cell in row.find_all("td")]
+    tds = row.find_all("td")
+    cells = [cell.get_text(" ", strip=True) for cell in tds]
     if len(cells) < 12:
         return None
 
@@ -229,6 +233,7 @@ def _parse_runner(row: Tag) -> ResultRunner | None:
         horse_no=as_int(horse_no),
         horse_name=name,
         brand_no=brand_no,
+        horse_id=_horse_id_from(tds[2]),
         jockey=jockey,
         trainer=trainer,
         actual_weight=as_int(act_wt),
@@ -240,6 +245,15 @@ def _parse_runner(row: Tag) -> ResultRunner | None:
         finish_time_s=parse_finish_time(time),
         win_odds=as_float(odds),
     )
+
+
+def _horse_id_from(cell: Tag) -> str | None:
+    """Read HK_YYYY_Bxxx from the horse cell's link, if it has one."""
+    link = cell.find("a")
+    if not isinstance(link, Tag):
+        return None
+    href = link.get("href")
+    return parse_horse_id(href) if isinstance(href, str) else None
 
 
 def _parse_placing(cell: str) -> tuple[int | None, bool, bool]:
