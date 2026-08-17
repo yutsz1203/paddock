@@ -56,7 +56,12 @@ class Settings(BaseSettings):
     hkjc_base_url: str = "https://racing.hkjc.com"
     hkjc_request_delay_s: float = 1.0
     hkjc_user_agent: str = "paddock/0.1 (personal research project; contact via GitHub)"
-    hkjc_max_retries: int = 3
+    hkjc_max_retries: int = 3  # attempts in total, not retries after the first
+
+    # Backoff between attempts, doubling each time and capped at 30s. Separate from
+    # the politeness delay: one paces a healthy server, the other backs away from a
+    # struggling one.
+    hkjc_retry_backoff_s: float = 2.0
 
     # ── Observability ───────────────────────────────────────────────────────────
     langfuse_public_key: SecretStr | None = None
