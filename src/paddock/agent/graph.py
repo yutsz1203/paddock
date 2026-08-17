@@ -44,6 +44,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
+import structlog
 from langgraph.graph import END, StateGraph
 from sqlalchemy.orm import Session
 
@@ -61,6 +62,8 @@ from paddock.llm.provider import LLM, Message, complete
 from paddock.retrieval.sql_tool import RunLine, find_horse, recent_runs
 from paddock.retrieval.vector_tool import CommentHit, search_comments
 
+log = structlog.get_logger(__name__)
+
 Route = Literal["sql", "vector", "both"]
 
 MAX_ATTEMPTS = 2
@@ -70,11 +73,20 @@ RUNS_PER_ANSWER = 5
 COMMENTS_PER_ANSWER = 5
 
 MAX_DISTANCE = 0.6
-"""Cosine distance beyond which a comment is not evidence about this question.
+"""Cosine distance beyond which a *comment* is not evidence about this question.
 
-A provisional number. T20 tunes it against the golden set; until then it is set
-where bge-m3 puts loosely-related racing prose, which is conservative — it prefers
-abstaining to answering from a comment that merely sounds relevant.
+It admits comments, and nothing finer. Applying it to the sentences inside an admitted
+comment was tried at Checkpoint A and reverted the same day — see `_describe_hit`.
+
+The number itself is provisional and known to be badly shaped rather than badly
+tuned. Measured twice, before and after the re-chunk, it commits both errors at once:
+it excluded a true positive at 0.607 on one question while admitting a negative
+control with no true answer at 0.374 on another. True positives and noise overlap on
+this scale, so no single cutoff separates them, and the observed band is 0.295 to 0.671
+rather than anything near 0.6. Left as it is until T20 can choose the *shape* — global
+cutoff, relative gap from the nearest hit, or no threshold at all behind the citation
+guard — with the golden set to decide it. Any number picked today would be fitted to
+whichever question found it.
 """
 
 # Words that mean "what happened during the race", which only the narrative knows.
@@ -311,7 +323,22 @@ def _synthesise(llm: LLM, state: _State) -> _State:
 
 
 def _enforce(state: _State) -> _State:
-    return {"verdict": verify(state["answer"], state["sources"])}
+    verdict = verify(state["answer"], state["sources"])
+
+    # Checkpoint A watched an answer fail this check and could not say why: the
+    # rejected text is replaced on the next attempt and nothing kept it. T18's traces
+    # supersede this, but they are three weeks out and the correction path is being
+    # exercised now that evidence blocks are comment-sized.
+    if not verdict.grounded:
+        log.info(
+            "answer_rejected",
+            attempt=state["attempts"],
+            uncited=verdict.uncited,
+            unknown_markers=verdict.unknown_markers,
+            answer=state["answer"],
+        )
+
+    return {"verdict": verdict}
 
 
 def _after_enforce(state: _State) -> str:
@@ -369,8 +396,18 @@ def _sections(label: str, values: list[float] | list[int] | None, *, unit: str =
 
 
 def _describe_hit(hit: CommentHit, horse: str) -> str:
-    """The stewards' words, with just enough context to place them — and to say who
-    they are about, which the comment text itself usually does not."""
+    """The stewards' report, whole, with enough context to place it — and to say who
+    it is about, which the comment text itself usually does not.
+
+    ADR-003 cut comments into sentences so that each could be *found*. It does not
+    follow that each should be quoted alone. Both narrower renderings were measured at
+    Checkpoint A and both produced confident, cited, wrong answers: the nearest
+    sentence only dropped "delayed the start when it proved difficult to load", and a
+    per-sentence distance rule dropped the jockey's account of the run at 0.607 while
+    the same threshold let a negative control through at 0.374 elsewhere. Every
+    sentence here is the same horse in the same race, so the cost of quoting all of
+    them is tokens; the cost of quoting some is the answer.
+    """
     where = f"{hit.race_date.isoformat()} {hit.racecourse} R{hit.race_no}"
     return f"Stewards' report on {horse}, {where}: {hit.text}"
 

@@ -53,6 +53,13 @@ FORMER_NAME = "TESTBRED SLOWCOACH"
 TROUBLE = "Was hampered approaching the 800 Metres and lost ground."
 CLEAN = "Raced wide throughout without cover."
 
+# Three sentences of one comment. The first and last answer a trouble question and
+# the middle one does not, so a correct evidence block quotes two of the three and
+# marks the gap. Each is over the chunker's 40-character floor, or they would merge.
+NEAR_FIRST = "Delayed the start when it proved difficult to load."
+FAR_MIDDLE = "The gelding was purchased out of a Melbourne sale ring in 2024."
+NEAR_LAST = "Near the 300 Metres was steadied when badly crowded for room."
+
 CITED = "It was hampered near the 800 and finished sixth [S1]."
 UNCITED = "It looked unlucky and should win next time."
 
@@ -153,6 +160,44 @@ def _seed() -> StubEmbedder:
         meeting_id = meeting.id
 
     embedder = StubEmbedder({TROUBLE: 0.95, CLEAN: 0.0})
+    with session_scope() as session:
+        embed_meeting(session, meeting_id=meeting_id, embedder=embedder)
+    return embedder
+
+
+def _seed_a_long_comment() -> StubEmbedder:
+    """One horse, one comment of three sentences, of which the middle one is noise.
+
+    Shaped like the real failure: the qualifying sentences are not adjacent, so the
+    evidence block has to skip one and say that it did.
+    """
+    with session_scope() as session:
+        session.add(Horse(horse_id=HORSE_ID, brand_no="Z001", name_en=NAME_EN, name_zh=NAME_ZH))
+        meeting = Meeting(race_date=RACE_DATE, racecourse="ST", going="GOOD")
+        session.add(meeting)
+        session.flush()
+        race = Race(
+            meeting_id=meeting.id,
+            race_no=5,
+            race_class="Class 4",
+            distance_m=1200,
+            course="A",
+            going="GOOD",
+            status="finished",
+        )
+        session.add(race)
+        session.flush()
+        session.add(
+            IncidentComment(
+                race_id=race.id,
+                horse_id=HORSE_ID,
+                finish_pos=6,
+                text_en=f"{NEAR_FIRST} {FAR_MIDDLE} {NEAR_LAST}",
+            )
+        )
+        meeting_id = meeting.id
+
+    embedder = StubEmbedder({NEAR_FIRST: 0.95, FAR_MIDDLE: 0.10, NEAR_LAST: 0.90})
     with session_scope() as session:
         embed_meeting(session, meeting_id=meeting_id, embedder=embedder)
     return embedder
@@ -440,6 +485,54 @@ def test_the_evidence_block_names_the_horse_it_is_about() -> None:
     evidence = prompt.split("Question:")[0]
 
     assert NAME_EN in evidence
+
+
+def test_the_evidence_block_carries_the_whole_comment() -> None:
+    """The Checkpoint A regression, as a test.
+
+    Chunks are sentences so that each can be *found*; it does not follow that each
+    should be quoted alone. Two narrower renderings were measured and both produced
+    confident, cited, wrong answers — the nearest sentence only, and then a per-
+    sentence distance rule that dropped the jockey's account of the run at 0.607 while
+    admitting a negative control at 0.374 on another question. `FAR_MIDDLE` here sits
+    beyond any threshold the agent applies and is in the block regardless: its comment
+    earned the citation, and every sentence in it is the same horse in the same race.
+    """
+    embedder = _seed_a_long_comment()
+    llm = ScriptedLLM(CITED)
+
+    with session_scope() as session:
+        answer_question(
+            session,
+            question=f"Did {NAME_EN} have any trouble in running?",
+            llm=llm,
+            embedder=embedder,
+        )
+
+    evidence = next(p for p in llm.prompts if "Question:" in p).split("Question:")[0]
+
+    assert NEAR_FIRST in evidence
+    assert FAR_MIDDLE in evidence
+    assert NEAR_LAST in evidence
+    # Reading order, so the model quotes the stewards rather than reassembling them.
+    assert evidence.index(NEAR_FIRST) < evidence.index(FAR_MIDDLE) < evidence.index(NEAR_LAST)
+
+
+def test_one_comment_is_one_marker_however_many_sentences_qualify() -> None:
+    """Two sentences of one comment are one source that says two things. Numbering
+    them S1 and S2 would let an answer cite itself twice and look corroborated."""
+    embedder = _seed_a_long_comment()
+
+    with session_scope() as session:
+        answer = answer_question(
+            session,
+            question=f"Did {NAME_EN} have any trouble in running?",
+            llm=ScriptedLLM(CITED),
+            embedder=embedder,
+        )
+
+    references = [source.reference for source in answer.sources if source.kind == "comment"]
+    assert len(references) == len(set(references)) == 1
 
 
 def test_the_form_line_says_how_the_race_was_run() -> None:

@@ -125,7 +125,10 @@ def main() -> int:
     print("embedding (bge-m3 loads on first use, ~1 minute)...")
     with session_scope() as session:
         result = embed_meeting(session, meeting_id=meeting_id, embedder=get_embedder())
-    print(f"embedded {result.embedded} chunks ({result.unchanged} unchanged)")
+    print(
+        f"embedded {result.embedded} chunks of {result.total} "
+        f"from {result.comments} comments ({result.unchanged} unchanged)"
+    )
 
     print("\nnext:")
     print("  uv run uvicorn paddock.api.main:app --port 8000")

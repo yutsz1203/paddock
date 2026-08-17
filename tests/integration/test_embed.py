@@ -1,8 +1,9 @@
 """Embedding a meeting into the chunk store.
 
 Most of this runs against a fake embedder: what is being tested is the bookkeeping —
-one chunk per comment, no duplicates on a re-run, metadata kept current — and a fake
-makes those assertions exact and fast. The real model is exercised separately, under
+one chunk per sentence-sized piece, no duplicates on a re-run, metadata kept current,
+and a shortened comment losing the chunks it no longer has — and a fake makes those
+assertions exact and fast. The real model is exercised separately, under
 the ``model`` marker, because the questions it answers are different ones: does a
 Chinese query actually find its English source, and does a meeting embed inside the
 time budget.
@@ -36,7 +37,17 @@ TEST_HORSES = ["HK_2099_Z001", "HK_2099_Z002", "HK_2099_Z003"]
 COMMENTS = [
     "Was hampered approaching the 800 Metres and lost ground.",
     "Was slow to begin and lost several lengths at the start.",
+    # Two sentences, two topics — the shape ADR-003 exists for. Everything asserting a
+    # chunk count below depends on this being the only multi-sentence comment here.
+    "Veterinary examination after the race revealed no abnormality. "
+    "The trainer was advised the horse must trial before racing again.",
+]
+
+EXPECTED_CHUNKS = [
+    COMMENTS[0],
+    COMMENTS[1],
     "Veterinary examination after the race revealed no abnormality.",
+    "The trainer was advised the horse must trial before racing again.",
 ]
 
 
@@ -171,16 +182,46 @@ def _delete_test_data() -> None:
 # ── Bookkeeping ─────────────────────────────────────────────────────────────────
 
 
-def test_one_chunk_per_comment() -> None:
+def test_one_chunk_per_sentence() -> None:
+    """Single-sentence comments give one chunk each; the two-sentence one gives two,
+    both addressed to the same comment. That last pair is the whole of ADR-003."""
     meeting_id = _seed()
 
     with session_scope() as session:
         result = embed_meeting(session, meeting_id=meeting_id, embedder=FakeEmbedder())
 
-    assert result.embedded == len(COMMENTS)
+    assert result.comments == len(COMMENTS)
+    assert result.total == len(COMMENTS) + 1  # the last comment is two sentences
+    assert result.embedded == result.total
+
     with session_scope() as session:
-        stored = session.scalars(select(Chunk).where(Chunk.source_type == "incident_comment")).all()
-        assert len({chunk.text for chunk in stored} & set(COMMENTS)) == len(COMMENTS)
+        stored = _test_chunks(session)
+        assert {chunk.text for chunk in stored} == set(EXPECTED_CHUNKS)
+        split = [chunk for chunk in stored if chunk.source_id == _comment_id(session, COMMENTS[2])]
+        assert sorted(chunk.chunk_index for chunk in split) == [0, 1]
+
+
+def test_a_shortened_comment_loses_its_surplus_chunks() -> None:
+    """HKJC amendments cut text as well as add it. A retracted sentence that stayed
+    behind would be retrievable and citable with nothing pointing at it."""
+    meeting_id = _seed()
+
+    with session_scope() as session:
+        embed_meeting(session, meeting_id=meeting_id, embedder=FakeEmbedder())
+
+    with session_scope() as session:
+        comment_id = _comment_id(session, COMMENTS[2])
+        comment = session.get(IncidentComment, comment_id)
+        assert comment is not None
+        comment.text_en = "Veterinary examination after the race revealed no abnormality."
+
+    with session_scope() as session:
+        result = embed_meeting(session, meeting_id=meeting_id, embedder=FakeEmbedder())
+
+    assert result.deleted == 1
+    with session_scope() as session:
+        chunks = session.scalars(select(Chunk).where(Chunk.source_id == comment_id)).all()
+        assert [chunk.chunk_index for chunk in chunks] == [0]
 
 
 def test_chunks_carry_the_metadata_retrieval_filters_on() -> None:
@@ -207,18 +248,22 @@ def test_re_embedding_changes_nothing() -> None:
     with session_scope() as session:
         embed_meeting(session, meeting_id=meeting_id, embedder=FakeEmbedder())
     with session_scope() as session:
-        before = {c.source_id: (c.id, list(c.embedding)) for c in _test_chunks(session)}
+        before = {
+            (c.source_id, c.chunk_index): (c.id, list(c.embedding)) for c in _test_chunks(session)
+        }
 
     second = FakeEmbedder()
     with session_scope() as session:
         result = embed_meeting(session, meeting_id=meeting_id, embedder=second)
 
     assert result.embedded == 0
-    assert result.unchanged == len(COMMENTS)
+    assert result.unchanged == len(EXPECTED_CHUNKS)
     assert second.embedded_texts == []  # unchanged text is never re-encoded
 
     with session_scope() as session:
-        after = {c.source_id: (c.id, list(c.embedding)) for c in _test_chunks(session)}
+        after = {
+            (c.source_id, c.chunk_index): (c.id, list(c.embedding)) for c in _test_chunks(session)
+        }
     assert after.keys() == before.keys()
     assert [after[k][0] for k in after] == [before[k][0] for k in after]
 
@@ -243,7 +288,7 @@ def test_an_edited_comment_is_re_embedded_in_place() -> None:
         result = embed_meeting(session, meeting_id=meeting_id, embedder=FakeEmbedder())
 
     assert result.embedded == 1
-    assert result.unchanged == len(COMMENTS) - 1
+    assert result.unchanged == len(EXPECTED_CHUNKS) - 1
 
     with session_scope() as session:
         chunks = session.scalars(select(Chunk).where(Chunk.source_id == comment_id)).all()
@@ -284,11 +329,18 @@ def test_a_meeting_with_no_comments_embeds_nothing() -> None:
 
     assert result.total == 0
     assert result.embedded == 0
+    assert result.comments == 0
 
 
 def test_an_unknown_meeting_is_refused() -> None:
     with session_scope() as session, pytest.raises(LookupError, match="meeting"):
         embed_meeting(session, meeting_id=-1, embedder=FakeEmbedder())
+
+
+def _comment_id(session: Session, text: str) -> int:
+    comment = session.scalar(select(IncidentComment).where(IncidentComment.text_en == text))
+    assert comment is not None
+    return comment.id
 
 
 def _test_chunks(session: Session) -> Sequence[Chunk]:

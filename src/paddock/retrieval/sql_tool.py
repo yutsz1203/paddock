@@ -219,4 +219,11 @@ def find_horse(session: Session, question: str) -> HorseMatch | None:
 
     if not candidates:
         return None
-    return max(candidates, key=lambda match: len(match.matched_name))
+    # `horse_id` breaks a tie on length. Without it `max` keeps whichever row Postgres
+    # returned first, which is stable for an unchanged table and not stable across a
+    # re-ingest or a vacuum — so the same question could resolve to a different horse
+    # next week. The seeded meeting alone holds four seven-character names (MATZDEN,
+    # STRAUSS, NUMBERS, SALON S), and a two-season backfill makes collisions ordinary.
+    # An arbitrary-but-fixed tiebreak is not a disambiguation strategy; that is T16's
+    # job. It is the difference between one wrong answer and an irreproducible one.
+    return max(candidates, key=lambda match: (len(match.matched_name), match.horse_id))

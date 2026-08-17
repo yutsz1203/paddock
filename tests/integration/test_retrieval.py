@@ -14,6 +14,11 @@ by other horses' comments that are close. A post-filter implementation returns n
 a pre-filter returns the horse's three nearest. That difference is invisible on a
 seeded meeting of ten rows and fatal on 12,000.
 
+**A comment is one hit, however many of its sentences match.** Chunks are sentences
+since ADR-003, so the nearest five *chunks* of a long comment can all belong to it —
+one citation wearing five hats, and four slots of evidence lost. The collapse is
+tested against a comment whose every sentence sits nearer the query than any rival's.
+
 A stub embedder with hand-placed vectors does the semantic work, because the
 assertions need distances that are known rather than plausible. bge-m3's real
 behaviour is tested in `test_embed.py` under the `model` marker.
@@ -42,7 +47,7 @@ from paddock.db.models import (
 )
 from paddock.db.session import session_scope
 from paddock.embed.store import embed_meeting
-from paddock.retrieval.sql_tool import recent_runs
+from paddock.retrieval.sql_tool import find_horse, recent_runs
 from paddock.retrieval.vector_tool import search_comments
 
 pytestmark = pytest.mark.integration
@@ -299,6 +304,29 @@ def test_a_horse_id_is_a_bound_parameter_not_sql() -> None:
         assert session.scalar(select(Runner).limit(1)) is not None
 
 
+# ── find_horse ──────────────────────────────────────────────────────────────────
+
+
+def test_two_names_of_equal_length_resolve_the_same_way_every_time() -> None:
+    """Longest-match cannot decide a tie, and "whichever row came back first" is not a
+    decision — it is stable for an unchanged table and not across a re-ingest. Two
+    horses named in one question is T16's problem; resolving it *differently next week*
+    is this function's problem. The seeded meeting alone holds four seven-character
+    names, and a two-season backfill makes collisions ordinary.
+    """
+    _seed_form()
+    question = f"Did {TARGET} or {OTHER} have a better run?"
+
+    with session_scope() as session:
+        matches = [find_horse(session, question) for _ in range(3)]
+
+    assert all(match is not None for match in matches)
+    assert len({match.horse_id for match in matches if match}) == 1
+    # The tiebreak is arbitrary but fixed, and named here so a change to it is visible.
+    assert matches[0] is not None
+    assert matches[0].horse_id == max(TARGET, OTHER)
+
+
 # ── search_comments ─────────────────────────────────────────────────────────────
 
 
@@ -362,13 +390,154 @@ def _seed_comments() -> StubEmbedder:
     return embedder
 
 
+def _seed_a_long_comment() -> StubEmbedder:
+    """One four-sentence comment whose every sentence beats three rivals' comments.
+
+    Without the collapse this returns four hits and one citation; with it, four
+    citations. The placements are deliberately ordered so the *third* sentence is the
+    nearest, which is also how the returned text is checked to be the matching piece
+    rather than simply the first.
+    """
+    sentences = [
+        "Jumped awkwardly and lost several lengths at the start.",
+        "Raced wide without cover throughout the middle stages of the event.",
+        "When questioned the rider stated that his mount was never travelling and "
+        "failed to respond to pressure in the Home Straight.",
+        "A veterinary inspection immediately following the race did not show any "
+        "significant findings.",
+    ]
+    placements: dict[str, float] = {QUERY: 1.0}
+    for index, sentence in enumerate(sentences):
+        placements[sentence] = 0.99 - index * 0.01
+    placements[sentences[2]] = 1.0  # the nearest piece is in the middle of the comment
+
+    with session_scope() as session:
+        session.add(Horse(horse_id=TARGET, brand_no="Z001", name_en=TARGET))
+        meeting = _meeting(session, SEASON_START)
+        race = Race(
+            meeting_id=meeting.id,
+            race_no=1,
+            race_class="Class 4",
+            distance_m=1200,
+            course="A",
+            going="GOOD",
+            status="finished",
+        )
+        session.add(race)
+        session.flush()
+        session.add(
+            IncidentComment(
+                race_id=race.id, horse_id=TARGET, finish_pos=1, text_en=" ".join(sentences)
+            )
+        )
+
+        for index in range(3):
+            rival = f"HK_2099_R{index:03d}"
+            session.add(Horse(horse_id=rival, brand_no=f"R{index:03d}", name_en=rival))
+            session.flush()
+            text = f"RIVAL {index} comment: was struck into during the running of the race."
+            placements[text] = 0.50 - index * 0.01  # further than every TARGET sentence
+            session.add(
+                IncidentComment(race_id=race.id, horse_id=rival, finish_pos=index + 2, text_en=text)
+            )
+
+    embedder = StubEmbedder(placements)
+    with session_scope() as session:
+        meeting_id = session.scalar(select(Meeting.id).where(Meeting.race_date == SEASON_START))
+        assert meeting_id is not None
+        embed_meeting(session, meeting_id=meeting_id, embedder=embedder)
+    return embedder
+
+
+def test_one_comment_is_one_hit_however_many_sentences_match() -> None:
+    """The failure this prevents is subtle: five hits, five markers, one source. The
+    answer looks corroborated and is not."""
+    embedder = _seed_a_long_comment()
+
+    with session_scope() as session:
+        hits = search_comments(session, query=QUERY, embedder=embedder, limit=4)
+
+    assert len({hit.comment_id for hit in hits}) == len(hits) == 4
+
+
+def test_a_hit_is_ranked_by_its_nearest_piece() -> None:
+    """Not by its first sentence, and not by an average over the comment."""
+    embedder = _seed_a_long_comment()
+
+    with session_scope() as session:
+        hit = search_comments(session, query=QUERY, embedder=embedder, horse_id=TARGET, limit=1)[0]
+
+    assert hit.nearest.chunk_index == 2
+    assert hit.nearest.text.startswith("When questioned the rider stated")
+    assert hit.distance == hit.nearest.distance
+
+
+def test_a_hit_carries_every_piece_of_its_comment() -> None:
+    """The regression this exists for: keeping only the nearest sentence handed the
+    model a stewards' sanction and dropped the sentence that answered the question.
+    One comment is one citation, but the evidence behind it stays whole.
+    """
+    embedder = _seed_a_long_comment()
+
+    with session_scope() as session:
+        hit = search_comments(session, query=QUERY, embedder=embedder, horse_id=TARGET, limit=1)[0]
+
+    assert [piece.chunk_index for piece in hit.pieces] == [0, 1, 2, 3]
+    assert hit.pieces[0].text.startswith("Jumped awkwardly")
+
+
+def test_pieces_beyond_the_ann_window_are_still_carried() -> None:
+    """The pieces come from a keyed lookup, not from the window that ranked the
+    comment. A window wide enough to rank is not wide enough to be complete."""
+    embedder = _seed_a_long_comment()
+
+    with session_scope() as session:
+        # limit=1 scans _FANOUT=4 rows; the comment has four pieces and three rivals
+        # sit in between, so a window-sourced hit would be missing some of them.
+        hit = search_comments(session, query=QUERY, embedder=embedder, limit=1)[0]
+
+    assert len(hit.pieces) == 4
+
+
+def test_a_hit_reads_as_the_whole_comment() -> None:
+    """Sentences are the unit of finding; the comment is the unit of evidence.
+
+    Selecting sentences by distance was tried at Checkpoint A and reverted — it
+    dropped a true positive seven thousandths outside the threshold. `text` puts the
+    comment back together in reading order, which is what a prompt and a source card
+    both want.
+    """
+    embedder = _seed_a_long_comment()
+
+    with session_scope() as session:
+        hit = search_comments(session, query=QUERY, embedder=embedder, horse_id=TARGET, limit=1)[0]
+
+    assert hit.text.startswith("Jumped awkwardly and lost several lengths at the start.")
+    assert hit.text.endswith("did not show any significant findings.")
+    assert all(piece.text in hit.text for piece in hit.pieces)
+
+
+def test_a_far_sentence_is_still_carried() -> None:
+    """The sentence that survives is not chosen by its own distance. This one sits
+    well beyond any threshold the agent applies and belongs to the evidence anyway,
+    because its comment earned the citation and it is the same horse, same race."""
+    embedder = _seed_a_long_comment()
+
+    with session_scope() as session:
+        hit = search_comments(session, query=QUERY, embedder=embedder, horse_id=TARGET, limit=1)[0]
+
+    furthest = max(hit.pieces, key=lambda piece: piece.distance)
+    assert furthest.distance > hit.nearest.distance
+    assert furthest.text in hit.text
+
+
 def test_search_returns_the_nearest_comments_first() -> None:
     embedder = _seed_comments()
 
     with session_scope() as session:
         hits = search_comments(session, query=QUERY, embedder=embedder, limit=3)
 
-    assert [hit.text for hit in hits] == [
+    assert [hit.nearest.text for hit in hits] == [
         "RIVAL 0 comment: was hampered approaching the 800 Metres.",
         "RIVAL 1 comment: was hampered approaching the 800 Metres.",
         "RIVAL 2 comment: was hampered approaching the 800 Metres.",

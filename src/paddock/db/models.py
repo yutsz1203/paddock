@@ -236,11 +236,17 @@ class Chunk(Base):
     deliberate: it lets the metadata filter and the ANN scan run in one statement,
     which is what makes hybrid retrieval a single query instead of two result sets
     reconciled in Python.
+
+    A chunk is addressed by ``(source_type, source_id, chunk_index)``: one comment
+    yields one chunk per sentence-sized piece (Checkpoint A, ADR-003), and the
+    position within the comment is what separates them. ``source_id`` alone is still
+    what a citation resolves — the reader is shown the sentence and can check the
+    whole comment behind it.
     """
 
     __tablename__ = "chunks"
     __table_args__ = (
-        UniqueConstraint("source_type", "source_id", name="uq_chunk_source"),
+        UniqueConstraint("source_type", "source_id", "chunk_index", name="uq_chunk_source"),
         Index("ix_chunks_meta", "chunk_meta", postgresql_using="gin"),
         Index(
             "ix_chunks_embedding",
@@ -254,6 +260,7 @@ class Chunk(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     source_type: Mapped[str] = mapped_column(String(32))  # 'incident_comment'
     source_id: Mapped[int]
+    chunk_index: Mapped[int] = mapped_column(default=0)  # 0-based, in reading order
     text: Mapped[str] = mapped_column(Text)
     chunk_meta: Mapped[dict[str, Any]] = mapped_column(JSONB)
     embedding: Mapped[Any] = mapped_column(Vector(EMBEDDING_DIM))
