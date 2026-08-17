@@ -41,6 +41,7 @@ from paddock.db.session import session_scope
 from paddock.ingest import pipeline
 from paddock.ingest.date_guard import FallbackDetectedError
 from paddock.ingest.pipeline import ingest_meeting
+from paddock.ingest.results import ResultsParseError
 from paddock.ingest.watermark import INCIDENT_REPORT, get_watermark
 
 pytestmark = pytest.mark.integration
@@ -190,6 +191,41 @@ def test_a_successful_meeting_advances_the_watermark() -> None:
 
     with session_scope() as session:
         assert get_watermark(session, INCIDENT_REPORT) == RACE_DATE
+
+
+def test_a_race_with_no_results_page_is_reported_not_dropped() -> None:
+    """The report already carries the card, and every result column is nullable.
+
+    Losing 142 runners and 114 comments over one missing enrichment page would be a
+    worse trade than recording the gap, so the gap is returned for T11 to log.
+    """
+    result = ingest_meeting(_fixture_client(), RACE_DATE, RACECOURSE)
+
+    assert result.races_without_results == list(range(2, RACES_IN_CARD + 1))
+    with session_scope() as session:
+        race_two = session.scalar(
+            select(Race)
+            .join(Meeting, Race.meeting_id == Meeting.id)
+            .where(Meeting.race_date == RACE_DATE, Race.race_no == 2)
+        )
+        assert race_two is not None, "the race is still ingested, from the report alone"
+
+
+def test_a_meeting_where_no_race_has_results_is_refused() -> None:
+    """One page missing is a gap; every page missing is the endpoint having moved.
+
+    Ingesting a full card with not one finishing time would look like a successful
+    meeting, and would keep looking like one for two seasons.
+    """
+    client = _fixture_client()
+    empty = (FIXTURES / "results_20260423_no_meeting.html").read_text()
+    client.serve(pipeline.RESULTS_PATH, pipeline.results_params(RACE_DATE, RACECOURSE, 1), empty)
+
+    with pytest.raises(ResultsParseError, match="endpoint has changed"):
+        ingest_meeting(client, RACE_DATE, RACECOURSE)
+
+    with session_scope() as session:
+        assert session.scalar(select(Meeting).where(Meeting.race_date == RACE_DATE)) is None
 
 
 # ── Idempotency ─────────────────────────────────────────────────────────────────
