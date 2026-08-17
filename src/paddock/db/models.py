@@ -27,6 +27,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -267,6 +268,33 @@ class Chunk(Base):
 
 
 # ── Ingestion bookkeeping ───────────────────────────────────────────────────────
+
+
+class FetchedPage(Base):
+    """Every page HKJC served us, gzipped, keyed by URL and fetch time.
+
+    Decided at Checkpoint A step 6. The alternative — keeping only ``source_url`` —
+    makes any parser fix after the backfill a re-scrape of both seasons: ~3,700
+    requests, an hour at 1 req/s, and the risk that the markup moved or the page is
+    gone. It cannot be retrofitted, because a page not kept is not recoverable.
+
+    Rows accumulate rather than being replaced: a report corrected days later is a
+    second version of the same URL, and the first is what earlier answers cited.
+    """
+
+    __tablename__ = "fetched_pages"
+    __table_args__ = (Index("ix_fetched_pages_url_time", "url", "fetched_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(Text)
+    fetched_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: dt.datetime.now(dt.UTC)
+    )
+    body_gz: Mapped[bytes] = mapped_column(LargeBinary)
+
+    # Of the *decompressed* body, so "did this page change?" is answered without
+    # decompressing anything, and so a gzip implementation change is not a content change.
+    sha256: Mapped[str] = mapped_column(String(64))
 
 
 class IngestRun(Base):

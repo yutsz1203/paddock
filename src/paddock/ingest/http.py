@@ -12,6 +12,7 @@ indistinguishable from an attack.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -42,6 +43,15 @@ class HkjcClient:
     def close(self) -> None:
         self._client.close()
 
+    def url_for(self, path: str, params: Mapping[str, str] | None = None) -> str:
+        """The absolute URL a `get_text(path, params)` would request.
+
+        The archive keys on this, so it is built by the same client that would do the
+        fetching — a separately assembled URL would drift and silently split one
+        page's history into two.
+        """
+        return str(self._client.build_request("GET", path, params=params).url)
+
     def _wait_turn(self) -> None:
         elapsed = time.monotonic() - self._last_request_at
         if elapsed < self._delay_s:
@@ -54,7 +64,7 @@ class HkjcClient:
         wait=wait_exponential(multiplier=2, min=2, max=30),
         reraise=True,
     )
-    def get_text(self, path: str, params: dict[str, str] | None = None) -> str:
+    def get_text(self, path: str, params: Mapping[str, str] | None = None) -> str:
         """GET `path`, returning the response body. Retries transport and 5xx errors.
 
         Note that HKJC returns 200 for dates that do not exist, serving the most
