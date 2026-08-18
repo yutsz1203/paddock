@@ -33,12 +33,15 @@ def test_date_list_is_sorted_newest_first() -> None:
     assert dates == sorted(dates, reverse=True)
 
 
-def test_candidates_are_only_race_weekdays() -> None:
+def test_every_day_is_a_candidate() -> None:
+    """No weekday is excluded. HKJC's published fixture list has meetings on a
+    Tuesday, a Thursday and a Friday, so a day skipped here is a meeting that is
+    never asked about — see `test_racing_calendar.py`."""
     days = list(candidate_dates(dt.date(2026, 4, 1), dt.date(2026, 4, 30)))
 
-    assert all(d.weekday() in {2, 5, 6} for d in days), "Wed, Sat, Sun only"
+    assert len(days) == 30
     assert dt.date(2026, 4, 26) in days, "a real Sunday meeting must be a candidate"
-    assert dt.date(2026, 4, 23) not in days, "Thursday is never a race day"
+    assert dt.date(2026, 4, 23) in days, "a Thursday must be too — some of them race"
 
 
 def test_candidate_range_is_inclusive() -> None:
@@ -92,9 +95,9 @@ def test_a_season_the_index_does_not_cover_falls_back_to_candidates() -> None:
     dates, source = dates_for_season(client, "2024-25")
 
     assert source == "candidates"
-    assert all(d.weekday() in {2, 5, 6} for d in dates)
     assert dt.date(2025, 3, 12) in dates, "a real Wednesday meeting must be a candidate"
-    assert len(dates) > 100, "roughly one candidate in three is a meeting"
+    assert dt.date(2025, 1, 31) in dates, "and so must the Lunar New Year Friday"
+    assert len(dates) == 365, "every day in the season — the guard does the filtering"
 
 
 class _IndexOnly:

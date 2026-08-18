@@ -6,9 +6,9 @@ Two sources, because HKJC only indexes the current season:
 is why race dates are never hardcoded, and why a rescheduled meeting is picked up
 without anyone editing a list.
 
-**Prior seasons** — no index exists, so candidate dates are generated (HK races on
-Wednesdays, Saturdays and Sundays) and the guard sorts them out. Roughly one in three
-is a real meeting; the rest are rejected.
+**Prior seasons** — no index exists, so every date in the season is offered as a
+candidate and the guard sorts them out. Roughly one in four is a real meeting; the
+rest are rejected.
 
 Confirming a candidate is not done here. It would cost a fetch per date that
 ingestion then pays for again, and — because that fetch would go through the client
@@ -28,10 +28,6 @@ from typing import Protocol
 
 DATE_LIST_PATH = "/racing/information/json/DateList/RacingIncidentReport.aspx"
 REPORT_PATH = "/en-us/local/information/racereportfull"
-
-# HK meetings fall on Wednesday, Saturday or Sunday. Generating only these cuts the
-# candidate set by more than half before any request is made.
-_RACE_WEEKDAYS = frozenset({2, 5, 6})  # Wed, Sat, Sun
 
 
 class DateListFetcher(Protocol):
@@ -57,11 +53,24 @@ def discover_current_season(client: DateListFetcher) -> list[dt.date]:
 
 
 def candidate_dates(start: dt.date, end: dt.date) -> Iterator[dt.date]:
-    """Yield every Wed/Sat/Sun in [start, end] — the dates worth checking."""
+    """Yield every date in [start, end]. The guard decides which are meetings.
+
+    This used to yield only Wednesdays, Saturdays and Sundays, which is when Hong
+    Kong races most weeks and which cut the candidate set by more than half. HKJC's
+    published 2024/25 fixture list disproved it: four of that season's 88 meetings
+    fell on none of those days — National Day, Boxing Day, the third day of Lunar
+    New Year, and HKSAR Establishment Day. The current season has five such
+    meetings, one of them a plain Tuesday in December that is not a public holiday
+    at all, so "race weekdays plus holidays" does not rescue the assumption either.
+
+    The cost of dropping it is real but small: 365 candidates for a season instead
+    of 157, so about three and a half extra minutes at one request a second, once
+    per prior season. The cost of keeping it was four meetings silently missing from
+    the corpus — not rejected, never asked about, and so recorded nowhere.
+    """
     day = start
     while day <= end:
-        if day.weekday() in _RACE_WEEKDAYS:
-            yield day
+        yield day
         day += dt.timedelta(days=1)
 
 
