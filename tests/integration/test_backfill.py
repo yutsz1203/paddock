@@ -9,9 +9,11 @@ read off the report page, and these tests drive `ingest_meeting` without a cours
 
 **Two candidate dates in three are not meetings.** The guard raises on each one, and
 a backfill that stopped there would need 140 restarts to cross 2024-25. So a rejected
-date is recorded and the walk continues — while a *failure* that is not a rejection
-stops it, because "HKJC changed their markup" should not be discovered 88 meetings
-later.
+date is recorded and the walk continues, as does a meeting that simply will not parse
+— its own transaction already rolled back, and `ingest_runs` has the date. The single
+exception is a report with no meeting header: past that point the guard cannot tell a
+real page from a substituted one, so continuing would write real data under wrong
+dates. That one stops the run.
 
 No network: `RecordingFetcher` serves the same fixture meeting under whatever date is
 asked for, which is exactly what HKJC's fallback does and what the guard exists to
@@ -31,6 +33,9 @@ from tests.doubles import RecordingFetcher
 from paddock.db.models import FetchedPage, IngestRun, Meeting, Watermark
 from paddock.db.session import session_scope
 from paddock.ingest import pipeline
+from paddock.ingest.backfill import backfill
+from paddock.ingest.date_guard import MeetingHeaderMissingError
+from paddock.ingest.incident_report import ReportParseError
 from paddock.ingest.pipeline import ingest_meeting
 from paddock.ingest.watermark import INCIDENT_REPORT
 
@@ -165,3 +170,154 @@ def test_an_explicit_course_still_wins() -> None:
         meeting = session.scalar(select(Meeting).where(Meeting.race_date == RACE_DATE))
         assert meeting is not None
         assert meeting.racecourse == "ST"
+
+
+# ── Walking a season ────────────────────────────────────────────────────────────
+
+
+def _season_client() -> RecordingFetcher:
+    """Two real meetings with a non-meeting Thursday between them."""
+    client = RecordingFetcher()
+    _serve_meeting(client, RACE_DATE, "report_20260426_valid.html", "ST", RACES_IN_CARD)
+    _serve_meeting(client, HV_DATE, "report_20250312_prior_season.html", "HV", 9)
+    client.serve(
+        pipeline.REPORT_PATH,
+        pipeline.report_params(FALLBACK_DATE),
+        (FIXTURES / "report_20260423_fallback.html").read_text(),
+    )
+    return client
+
+
+SEASON = [HV_DATE, FALLBACK_DATE, RACE_DATE]
+
+
+def test_every_meeting_in_the_range_is_ingested() -> None:
+    report = backfill(_season_client(), SEASON)
+
+    assert [o.race_date for o in report.ingested] == [HV_DATE, RACE_DATE]
+    with session_scope() as session:
+        stored = set(
+            session.scalars(select(Meeting.race_date).where(Meeting.race_date.in_(SEASON)))
+        )
+        assert stored == {HV_DATE, RACE_DATE}
+
+
+def test_a_date_the_guard_rejects_does_not_stop_the_walk() -> None:
+    """Two candidate dates in three are not meetings. A backfill that stopped on the
+    first one would need a hundred restarts to cross a season."""
+    report = backfill(_season_client(), SEASON)
+
+    assert [o.race_date for o in report.rejected] == [FALLBACK_DATE]
+    assert len(report.ingested) == 2, "the date after the rejection was still ingested"
+
+
+def test_a_rejected_date_is_left_for_a_human_to_look_at() -> None:
+    """`ingest_runs` is the log: a rejection count that climbs is how a markup change
+    announces itself, and each row names the date to go and check by hand."""
+    backfill(_season_client(), SEASON)
+
+    with session_scope() as session:
+        run = session.scalar(select(IngestRun).where(IngestRun.race_date == FALLBACK_DATE))
+        assert run is not None
+        assert run.status == "fallback_detected"
+        assert "2026-07-15" in (run.error or ""), "the meeting HKJC served instead"
+
+
+def test_nothing_is_written_for_a_rejected_date() -> None:
+    backfill(_season_client(), SEASON)
+
+    with session_scope() as session:
+        assert session.scalar(select(Meeting).where(Meeting.race_date == FALLBACK_DATE)) is None
+
+
+# ── Restarting ──────────────────────────────────────────────────────────────────
+
+
+def test_a_meeting_already_stored_is_not_ingested_twice() -> None:
+    """A run that dies at meeting 60 of 88 is resumed, not repeated. The upserts make
+    a repeat harmless, but 60 meetings of pointless writes is an hour either way."""
+    backfill(_season_client(), SEASON)
+
+    second = backfill(_season_client(), SEASON)
+
+    assert [o.race_date for o in second.skipped] == [HV_DATE, RACE_DATE]
+    assert second.ingested == []
+
+
+def test_a_skipped_meeting_records_no_second_run() -> None:
+    backfill(_season_client(), SEASON)
+    backfill(_season_client(), SEASON)
+
+    with session_scope() as session:
+        runs = list(session.scalars(select(IngestRun).where(IngestRun.race_date == RACE_DATE)))
+        assert len(runs) == 1
+
+
+def test_refresh_re_ingests_what_is_already_there() -> None:
+    """For the meetings whose stewards' report HKJC corrected after publication."""
+    backfill(_season_client(), SEASON)
+
+    second = backfill(_season_client(), SEASON, refresh=True)
+
+    assert [o.race_date for o in second.ingested] == [HV_DATE, RACE_DATE]
+    assert second.skipped == []
+
+
+# ── When something is actually wrong ────────────────────────────────────────────
+
+
+def test_one_bad_meeting_does_not_cost_the_other_eighty_seven() -> None:
+    """A single meeting that will not parse is recorded and stepped over. It cannot
+    corrupt anything — the meeting transaction rolled back — and the report says so."""
+    client = _season_client()
+    client.fail(
+        pipeline.REPORT_PATH,
+        pipeline.report_params(HV_DATE),
+        ReportParseError("no table.rirr elements"),
+    )
+
+    report = backfill(client, SEASON)
+
+    assert [o.race_date for o in report.failed] == [HV_DATE]
+    assert [o.race_date for o in report.ingested] == [RACE_DATE]
+
+
+def test_a_guard_that_can_no_longer_tell_stops_everything() -> None:
+    """The one failure that must not be stepped over. Without the header the guard
+    cannot separate a real page from a substituted one, so every date after this is
+    unverifiable — and ingesting them would write real data under wrong dates."""
+    client = _season_client()
+    client.pages[client.url_for(pipeline.REPORT_PATH, pipeline.report_params(HV_DATE))] = (
+        "<html><body>no header here</body></html>"
+    )
+
+    with pytest.raises(MeetingHeaderMissingError):
+        backfill(client, SEASON)
+
+    with session_scope() as session:
+        assert session.scalar(select(Meeting).where(Meeting.race_date == RACE_DATE)) is None
+
+
+# ── Watching it run ─────────────────────────────────────────────────────────────
+
+
+def test_each_outcome_is_announced_as_it_happens() -> None:
+    """The real run is 1-2 hours long. A report printed at the end of it is a report
+    nobody can tell from a hang."""
+    seen: list[tuple[dt.date, str]] = []
+
+    backfill(_season_client(), SEASON, on_outcome=lambda o: seen.append((o.race_date, o.status)))
+
+    assert seen == [
+        (HV_DATE, "ingested"),
+        (FALLBACK_DATE, "rejected"),
+        (RACE_DATE, "ingested"),
+    ]
+
+
+def test_the_report_counts_what_was_written() -> None:
+    report = backfill(_season_client(), SEASON)
+
+    assert report.meetings == 2
+    assert report.races == RACES_IN_CARD + 9
+    assert report.comments > 0
