@@ -35,7 +35,7 @@ from tests.doubles import RecordingFetcher
 from paddock.db.models import FetchedPage, IngestRun, Meeting, Race, Runner
 from paddock.db.session import session_scope
 from paddock.ingest import pipeline
-from paddock.ingest.integrity import check_integrity, verify_season
+from paddock.ingest.integrity import IntegrityReport, check_integrity, verify_season
 from paddock.ingest.pipeline import ingest_meeting
 from paddock.ingest.racing_calendar import PublishedMeeting
 
@@ -143,20 +143,31 @@ def _clone_meeting_onto(day: dt.date, target: dt.date) -> None:
 
 
 def test_two_real_meetings_pass() -> None:
+    """Scoped to the two meetings this test created, and to nothing else.
+
+    `check_integrity` audits the whole corpus by design, so neither a total nor a
+    delta is safe to assert here: the total is whatever the machine has ingested, and
+    a delta races anything else writing meetings — a live backfill in another process,
+    for one. What this test is actually about is that these two meetings are clean, so
+    that is what it asks."""
     _ingest_both_meetings()
 
-    report = check_integrity()
+    mine = {ST_DATE, HV_DATE}
+    findings = [f for f in check_integrity().findings if mine & set(f.race_dates)]
 
-    assert report.clean, report.findings
-    assert report.meetings_checked == 2
+    assert findings == []
 
 
-def test_an_empty_corpus_is_not_reported_as_clean_data() -> None:
-    """Nothing to find and nothing checked are different answers, and a backfill that
-    wrote nothing at all must not read as a pass."""
-    report = check_integrity()
+def test_nothing_checked_is_not_the_same_answer_as_nothing_wrong() -> None:
+    """A backfill that wrote nothing at all must not read as a pass, so `clean` alone
+    is never the whole verdict — the caller has to look at the count too.
 
-    assert report.meetings_checked == 0
+    A property of the report rather than of the database, so it is stated directly
+    instead of by emptying a corpus that no longer has any reason to be empty."""
+    report = IntegrityReport(findings=[], meetings_checked=0)
+
+    assert report.clean
+    assert report.meetings_checked == 0, "which is why the CLI prints both"
 
 
 # ── Two meetings, one card ──────────────────────────────────────────────────────

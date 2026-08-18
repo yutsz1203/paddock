@@ -9,9 +9,10 @@ a venue split), and all of them are re-asserted below. That is what turns "typed
 carefully" into "checked".
 
 **Prove that Hong Kong does not race on a fixed weekday.** The candidate generator
-originally yielded Wednesdays, Saturdays and Sundays. Between them these two seasons
-have nine meetings on none of those days, which is why `candidate_dates` now yields
-every day — see `test_every_published_meeting_is_reachable`.
+originally yielded Wednesdays, Saturdays and Sundays. Between them these three seasons
+have fifteen meetings on none of those days — four, then five, then six, so the
+assumption is getting worse rather than better. That is why `candidate_dates` now
+yields every day; see `test_every_published_meeting_is_reachable`.
 
 **Cross-check HKJC against HKJC.** For 2025-26 there are two independent statements
 of the same season: this calendar, and the JSON date index the discovery code
@@ -38,6 +39,7 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "html"
 SEASONS = [
     ("2024-25", 88, {"ST": 51, "HV": 37}),
     ("2025-26", 88, {"ST": 52, "HV": 36}),
+    ("2026-27", 88, {"ST": 49, "HV": 39}),
 ]
 SEASON_IDS = [season for season, _, _ in SEASONS]
 
@@ -156,6 +158,15 @@ OFF_SCHEDULE = {
         dt.date(2026, 1, 1),
         dt.date(2026, 2, 19),
         dt.date(2026, 4, 6),
+    ],
+    # Six, the most of the three seasons — the assumption gets worse, not better.
+    "2026-27": [
+        dt.date(2026, 10, 1),
+        dt.date(2026, 10, 19),
+        dt.date(2027, 1, 1),
+        dt.date(2027, 2, 8),
+        dt.date(2027, 2, 11),
+        dt.date(2027, 7, 1),
     ],
 }
 

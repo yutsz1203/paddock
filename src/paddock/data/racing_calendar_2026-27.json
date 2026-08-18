@@ -1,0 +1,359 @@
+{
+  "season": "2026-27",
+  "published": "2026-07-20",
+  "source": "HKJC Racing Fixtures - 2026/2027 Season",
+  "meetings": [
+    {
+      "date": "2026-09-06",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-09-09",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-09-13",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-09-16",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-09-20",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-09-23",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-09-27",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-10-01",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-10-04",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-10-07",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-10-11",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-10-14",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-10-19",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-10-21",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-10-25",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-10-28",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-11-01",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-11-04",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-11-08",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-11-11",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-11-14",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-11-18",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-11-22",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-11-25",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-11-29",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-12-02",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-12-06",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-12-09",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-12-13",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-12-16",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-12-20",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2026-12-23",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2026-12-26",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-01-01",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-01-06",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-01-10",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-01-13",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-01-17",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-01-20",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-01-24",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-01-27",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-01-31",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-02-03",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-02-08",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-02-11",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-02-14",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-02-17",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-02-21",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-02-24",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-02-28",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-03-03",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-03-07",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-03-10",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-03-14",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-03-17",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-03-21",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-03-24",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-03-28",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-03-31",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-04-04",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-04-07",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-04-11",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-04-14",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-04-18",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-04-21",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-04-25",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-04-28",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-05-02",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-05-05",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-05-08",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-05-12",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-05-16",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-05-19",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-05-23",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-05-26",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-05-30",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-06-02",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-06-06",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-06-09",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-06-12",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-06-20",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-06-23",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-06-26",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-07-01",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-07-04",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-07-07",
+      "racecourse": "HV"
+    },
+    {
+      "date": "2027-07-11",
+      "racecourse": "ST"
+    },
+    {
+      "date": "2027-07-14",
+      "racecourse": "HV"
+    }
+  ]
+}
