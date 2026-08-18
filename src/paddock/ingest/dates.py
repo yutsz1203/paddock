@@ -92,7 +92,9 @@ def season_bounds(season: str) -> tuple[dt.date, dt.date]:
 
     start_year = int(match.group(1))
     if int(match.group(2)) != (start_year + 1) % 100:
-        raise ValueError(f"{season!r} is not a season: the years are not consecutive")
+        raise ValueError(
+            f"{season!r} is not a season: the years are not consecutive, e.g. '2025-26'"
+        )
 
     return dt.date(start_year, 9, 1), dt.date(start_year + 1, 8, 31)
 

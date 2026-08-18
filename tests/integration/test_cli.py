@@ -34,9 +34,22 @@ FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "html"
 
 RACE_DATE = dt.date(2026, 4, 26)
 FALLBACK_DATE = dt.date(2026, 4, 23)
+UNPARSEABLE_DATE = dt.date(2026, 4, 19)  # a real Sunday whose page will not parse
+ALL_DATES = (RACE_DATE, FALLBACK_DATE, UNPARSEABLE_DATE)
 RACES_IN_CARD = 11
 
 runner = CliRunner()
+
+
+def _serve_dates(monkeypatch: pytest.MonkeyPatch, dates: list[dt.date], source: str) -> None:
+    """Stand in for date discovery, which is the one step the archive cannot cover.
+
+    Every page a backfill reads comes from `fetch_page` and so from Postgres, but the
+    season index is a view of today rather than a page anything cites — archiving it
+    would mean reading a stale season list on the next run. So it is the one seam
+    these tests replace, and it has its own unit tests in `test_dates.py`.
+    """
+    monkeypatch.setattr("paddock.cli.dates_for_season", lambda client, season: (dates, source))
 
 
 @pytest.fixture(autouse=True)
@@ -50,7 +63,7 @@ def _urls() -> list[str]:
     """Every URL either meeting could be archived under, as production builds them."""
     with HkjcClient() as client:
         urls = []
-        for day in (RACE_DATE, FALLBACK_DATE):
+        for day in ALL_DATES:
             urls.append(client.url_for(pipeline.REPORT_PATH, pipeline.report_params(day)))
             for race_no in range(1, RACES_IN_CARD + 1):
                 urls.append(
@@ -68,7 +81,7 @@ def _urls() -> list[str]:
 
 def _delete_everything() -> None:
     with session_scope() as session:
-        for day in (RACE_DATE, FALLBACK_DATE):
+        for day in ALL_DATES:
             session.query(Meeting).filter(Meeting.race_date == day).delete(
                 synchronize_session=False
             )
@@ -183,3 +196,99 @@ def test_embedding_an_unknown_meeting_says_so() -> None:
     assert result.exit_code == 1
     assert "2026-04-26" in result.output
     assert "Traceback" not in result.output
+
+
+# ── Backfilling a season ────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("bad", ["2024-2025", "2024-26", "next"])
+def test_a_malformed_season_is_rejected_before_a_single_request(bad: str) -> None:
+    """The run it would otherwise start is an hour long and 3,700 requests."""
+    result = runner.invoke(app, ["ingest", "season", "--season", bad])
+
+    assert result.exit_code != 0
+    assert "2025-26" in result.output, "the form it wanted, shown by example"
+
+
+def test_a_season_names_every_meeting_as_it_lands(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One to two hours of runtime. A summary at the end of it and nothing before is
+    indistinguishable from a hang."""
+    _archive(RACE_DATE, "report_20260426_valid.html")
+    _serve_dates(monkeypatch, [RACE_DATE], "index")
+
+    result = runner.invoke(app, ["ingest", "season", "--season", "2025-26"])
+
+    assert result.exit_code == 0, result.output
+    assert "88 dates" not in result.output
+    assert "2026-04-26" in result.output
+    assert "ingested" in result.output
+    assert "1 ingested" in result.output
+
+
+def test_where_the_dates_came_from_is_stated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """88 dates from HKJC's own index and 140 generated guesses are different runs,
+    and only one of them is expected to produce a pile of rejections."""
+    _serve_dates(monkeypatch, [FALLBACK_DATE], "candidates")
+    _archive(FALLBACK_DATE, "report_20260423_fallback.html")
+
+    result = runner.invoke(app, ["ingest", "season", "--season", "2024-25"])
+
+    assert "candidates" in result.output
+
+
+def test_a_rejected_date_is_named_not_just_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rejection list is what a human reviews after a prior-season backfill."""
+    _archive(FALLBACK_DATE, "report_20260423_fallback.html")
+    _serve_dates(monkeypatch, [FALLBACK_DATE], "candidates")
+
+    result = runner.invoke(app, ["ingest", "season", "--season", "2024-25"])
+
+    assert result.exit_code == 0, "two candidates in three are not meetings — not a failure"
+    assert "2026-04-23" in result.output
+    assert "rejected" in result.output
+
+
+def test_a_backfill_that_lost_a_meeting_exits_non_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing was corrupted — the meeting rolled back — but a season with a hole in
+    it must not end in a green exit code that says otherwise."""
+    _serve_dates(monkeypatch, [UNPARSEABLE_DATE], "index")
+    with HkjcClient() as client, session_scope() as session:
+        store_page(
+            session,
+            url=client.url_for(pipeline.REPORT_PATH, pipeline.report_params(UNPARSEABLE_DATE)),
+            body="<html><body>Race Meeting: 19/04/2026 (Sun)</body></html>",
+        )
+
+    result = runner.invoke(app, ["ingest", "season", "--season", "2025-26"])
+
+    assert result.exit_code == 1
+    assert "failed" in result.output
+
+
+# ── Auditing what came out ──────────────────────────────────────────────────────
+
+
+def test_the_backfill_audits_itself_when_it_finishes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The acceptance criterion is a post-backfill integrity query, so running it is
+    not left to whoever remembers."""
+    _archive(RACE_DATE, "report_20260426_valid.html")
+    _serve_dates(monkeypatch, [RACE_DATE], "index")
+
+    result = runner.invoke(app, ["ingest", "season", "--season", "2025-26"])
+
+    assert "integrity" in result.output
+    assert "1 meeting" in result.output
+
+
+def test_integrity_can_be_re_run_on_its_own() -> None:
+    result = runner.invoke(app, ["check", "integrity"])
+
+    assert result.exit_code == 0, result.output
+    assert "clean" in result.output
+
+
+def test_integrity_says_when_there_is_nothing_to_check() -> None:
+    """An empty database passing every check is not the same as a corpus that did."""
+    result = runner.invoke(app, ["check", "integrity"])
+
+    assert "0 meetings" in result.output

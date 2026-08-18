@@ -13,12 +13,16 @@ markup change, an endpoint that moved — these are all *expected* outcomes of p
 a scraper at a site nobody promised us. They exit non-zero with one sentence, because
 the operator needs to know a date was skipped, not to read a stack trace.
 
+**Turning a long run into something to watch.** `ingest season` is one to two hours
+of network-bound work. It prints each date as it lands rather than a summary at the
+end, because a silent process and a hung one look identical.
+
 ## What is not here yet
 
-`ingest season` (T11), `ingest upcoming` (T13), `ingest since` and `schedule` (T14)
-and `eval` (T19) are in the spec's command list and are not built, because the code
-underneath them is not built either. They are absent rather than stubbed: a command
-that exists and does nothing is worse than one that does not exist.
+`ingest upcoming` (T13), `ingest since` and `schedule` (T14) and `eval` (T19) are in
+the spec's command list and are not built, because the code underneath them is not
+built either. They are absent rather than stubbed: a command that exists and does
+nothing is worse than one that does not exist.
 """
 
 from __future__ import annotations
@@ -33,9 +37,12 @@ from paddock.db.models import Meeting
 from paddock.db.session import session_scope
 from paddock.embed.embedder import get_embedder
 from paddock.embed.store import embed_meeting
+from paddock.ingest.backfill import Outcome, backfill
 from paddock.ingest.date_guard import FallbackDetectedError, MeetingHeaderMissingError
+from paddock.ingest.dates import dates_for_season, season_bounds
 from paddock.ingest.http import HkjcClient
 from paddock.ingest.incident_report import ReportParseError
+from paddock.ingest.integrity import IntegrityReport, check_integrity
 from paddock.ingest.pipeline import ingest_meeting
 from paddock.ingest.results import ResultsParseError
 
@@ -46,6 +53,8 @@ app = typer.Typer(
 )
 ingest_app = typer.Typer(help="Fetch and store racing data.", no_args_is_help=True)
 app.add_typer(ingest_app, name="ingest")
+check_app = typer.Typer(help="Audit what was ingested.", no_args_is_help=True)
+app.add_typer(check_app, name="check")
 
 
 class Racecourse(StrEnum):
@@ -72,8 +81,25 @@ def _parse_date(value: str) -> dt.date:
         raise typer.BadParameter(f"{value!r} is not a date in YYYYMMDD form") from None
 
 
+def _parse_season(value: str) -> str:
+    # Validated here rather than at the first request, because the run it would
+    # otherwise start is an hour long and 3,700 requests.
+    try:
+        season_bounds(value)
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from None
+    return value
+
+
 DateOption = typer.Option(
     ..., "--date", metavar="YYYYMMDD", help="Meeting date.", parser=_parse_date
+)
+SeasonOption = typer.Option(
+    ...,
+    "--season",
+    metavar="YYYY-YY",
+    help="Season to backfill, e.g. 2025-26.",
+    parser=_parse_season,
 )
 CourseOption = typer.Option(..., "--course", help="Racecourse: ST (Sha Tin) or HV (Happy Valley).")
 
@@ -139,6 +165,91 @@ def embed_command(
         f"{result.embedded} chunks embedded of {result.total} "
         f"from {result.comments} comments ({result.unchanged} unchanged, {result.deleted} deleted)"
     )
+
+
+@ingest_app.command("season")
+def ingest_season_command(
+    season: str = SeasonOption,
+    refresh: bool = typer.Option(
+        False, "--refresh", help="Re-ingest meetings already stored, re-fetching their pages."
+    ),
+) -> None:
+    """Backfill a whole season, then audit what came out.
+
+    Restartable: dates already stored are skipped, and dates already checked and
+    rejected are re-checked from the page archive without a request. So a run that
+    stops at meeting 60 of 88 is resumed by running this again.
+    """
+    with HkjcClient() as client:
+        dates, source = dates_for_season(client, season)
+        typer.echo(f"{season}: {len(dates)} dates from the {source}")
+
+        try:
+            report = backfill(client, dates, refresh=refresh, on_outcome=_announce)
+        except MeetingHeaderMissingError as error:
+            # The one failure worth stopping for: past it, the guard can no longer
+            # tell a real page from a substituted one. What was written stands.
+            typer.secho(f"stopped: {error}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from None
+
+    typer.echo(
+        f"{len(dates)} dates: {len(report.ingested)} ingested, {len(report.rejected)} rejected, "
+        f"{len(report.skipped)} skipped, {len(report.failed)} failed"
+    )
+    typer.echo(f"{report.meetings} meetings, {report.races} races, {report.comments} comments")
+
+    for race_date, races in report.races_without_results:
+        missing = ", ".join(str(n) for n in races)
+        typer.secho(f"{race_date}: no results page for races {missing}", fg=typer.colors.YELLOW)
+
+    clean = _report_integrity(check_integrity())
+    if report.failed or not clean:
+        # Nothing was corrupted — each failed meeting rolled its own transaction back
+        # — but a season with a hole in it must not exit green.
+        raise typer.Exit(1)
+
+
+def _announce(outcome: Outcome) -> None:
+    """One line per date, as it happens. See the module docstring."""
+    colour = {
+        "ingested": typer.colors.GREEN,
+        "rejected": typer.colors.BLUE,
+        "skipped": typer.colors.WHITE,
+        "failed": typer.colors.RED,
+    }[outcome.status]
+    detail = outcome.detail or ""
+    if outcome.ingest is not None:
+        detail = (
+            f"{outcome.ingest.races} races, {outcome.ingest.runners} runners, "
+            f"{outcome.ingest.comments} comments"
+        )
+    typer.secho(f"  {outcome.race_date}  {outcome.status:<9} {detail}", fg=colour)
+
+
+@check_app.command("integrity")
+def check_integrity_command() -> None:
+    """Re-derive every meeting's date from its archived page, and look for duplicates."""
+    if not _report_integrity(check_integrity()):
+        raise typer.Exit(1)
+
+
+def _report_integrity(report: IntegrityReport) -> bool:
+    """Print the audit and say whether it passed. Shared by both commands."""
+    if report.clean:
+        typer.secho(
+            f"integrity: {report.meetings_checked} meetings checked, clean", fg=typer.colors.GREEN
+        )
+        return True
+
+    typer.secho(
+        f"integrity: {report.meetings_checked} meetings checked, {len(report.findings)} findings",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    for finding in report.findings:
+        dates = ", ".join(day.isoformat() for day in finding.race_dates)
+        typer.secho(f"  {finding.check}  {dates}: {finding.detail}", fg=typer.colors.RED, err=True)
+    return False
 
 
 @app.command("serve")
