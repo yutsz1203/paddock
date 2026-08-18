@@ -43,7 +43,11 @@ from paddock.ingest.entities import normalise_person_name, parse_horse_id, parse
 _RACE_NO = re.compile(r"Race:\s*(\d+)")
 _RACE_CLASS = re.compile(r"\b(Class\s+\d+|Group\s+(?:One|Two|Three)|Griffin|Restricted)\b", re.I)
 _DISTANCE = re.compile(r"\b(\d{3,4})\s*m\b", re.I)
-_HORSE_NAME_BRAND = re.compile(r"^(.*?)\s*\(([A-Z]\d{3})\)\s*$")
+# "MATZDEN (L133)", and occasionally "BEAR CHAMP (AJ313)" — a brand carrying a
+# leading letter that the horse's own link and silks image both omit. The trailing
+# letter+3-digits is the brand HKJC issued; the prefix is dropped so that brand_no
+# stays the tail of horse_id, which is what the sectional join relies on.
+_HORSE_NAME_BRAND = re.compile(r"^(.*?)\s*\(([A-Z]?)([A-Z]\d{3})\)\s*$")
 
 # The stewards' way of saying nothing happened.
 _NO_REPORT = "no report"
@@ -227,11 +231,11 @@ def _horse_id_from(cell: Tag) -> str | None:
 
 
 def _split_name_and_brand(cell: str) -> tuple[str, str]:
-    """'MATZDEN (L133)' -> ('MATZDEN', 'L133')."""
+    """'MATZDEN (L133)' -> ('MATZDEN', 'L133'); 'BEAR CHAMP (AJ313)' -> (..., 'J313')."""
     match = _HORSE_NAME_BRAND.match(cell.strip())
     if match is None:
         raise ReportParseError(f"could not read a brand number from {cell!r}")
-    return match.group(1).strip(), match.group(2)
+    return match.group(1).strip(), match.group(3)
 
 
 def _parse_placing(cell: str) -> tuple[int | None, bool, bool]:

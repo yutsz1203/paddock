@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import re
 
-# "MATZDEN (L133)", sometimes with a non-breaking space before the bracket.
-_NAME_BRAND = re.compile(r"^(.*?)[\s\xa0]*\(([A-Z]\d{3})\)\s*$")
+# "MATZDEN (L133)", sometimes with a non-breaking space before the bracket, and
+# occasionally with a leading letter the horse's own link omits ("BEAR CHAMP (AJ313)"
+# for HK_2023_J313). Only the trailing letter+3-digits is the issued brand — see
+# `incident_report._HORSE_NAME_BRAND`, which has to agree with this for the join.
+_NAME_BRAND = re.compile(r"^(.*?)[\s\xa0]*\(([A-Z]?)([A-Z]\d{3})\)\s*$")
 
 # "1:08.70" (minutes) or "58.42" (seconds only)
 _MINUTES_SECONDS = re.compile(r"^(\d+):(\d{2}(?:\.\d+)?)$")
@@ -38,7 +41,7 @@ def split_name_and_brand(cell: str) -> tuple[str, str]:
     match = _NAME_BRAND.match(cell.replace("\xa0", " ").strip())
     if match is None:
         raise ValueError(f"no brand number in {cell!r}")
-    return match.group(1).strip(), match.group(2)
+    return match.group(1).strip(), match.group(3)
 
 
 def parse_finish_time(cell: str) -> float | None:

@@ -70,3 +70,23 @@ def test_brand_numbers_are_extracted(sectionals) -> None:  # type: ignore[no-unt
         assert len(runner.brand_no) == 4
         assert "\xa0" not in runner.horse_name
         assert "(" not in runner.horse_name
+
+
+def test_a_prefixed_brand_number_still_reads_as_a_runner_row() -> None:
+    """"BEAR CHAMP&nbsp;(AJ313)" carries a leading letter that its own link omits.
+
+    The row filter used to require exactly one letter before the digits, so this
+    runner was not recognised as a runner row at all — the page parsed, the race
+    parsed, and one horse simply had no sectionals. That is the failure mode worth a
+    test: it costs data without raising anything.
+    """
+    html = (FIXTURES / "sectional_20241109_R2_prefixed_brand.html").read_text(
+        encoding="utf-8", errors="ignore"
+    )
+
+    runners = parse_sectional_times(html)
+    bear_champ = next(r for r in runners if r.horse_name == "BEAR CHAMP")
+
+    assert bear_champ.brand_no == "J313"
+    assert bear_champ.sectional_times
+    assert len(runners) == 14, "every runner in the race, not just the unprefixed ones"

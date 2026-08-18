@@ -275,3 +275,28 @@ def test_a_suspension_naming_the_other_venue_does_not_move_the_meeting() -> None
 
     assert "Happy Valley" in load("report_20260426_valid.html")
     assert report.racecourse == "ST"
+
+
+def test_a_prefixed_brand_number_is_reduced_to_the_canonical_brand() -> None:
+    """One runner in the 2024/25 season is written "BEAR CHAMP (AJ313)" while its
+    link, and the silks image beside it, both say J313 — the brand HKJC issued it
+    for the 2023/24 intake. The leading letter is display decoration on the report
+    page only.
+
+    It cannot be stored as written. `brand_no` is what joins a report row to its
+    sectional row, and the sectional page spells the brand without the prefix, so
+    keeping "AJ313" would drop the sectionals silently rather than loudly. The tail
+    of `horse_id` is the authority.
+    """
+    report = parse_meeting_report(load("report_20241109_prefixed_brand.html"), dt.date(2024, 11, 9))
+
+    runner = next(
+        run
+        for race in report.races
+        for run in race.runners
+        if run.horse_name == "BEAR CHAMP"
+    )
+
+    assert runner.brand_no == "J313"
+    assert runner.horse_id == "HK_2023_J313"
+    assert runner.horse_id.endswith(runner.brand_no)

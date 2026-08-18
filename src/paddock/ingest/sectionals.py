@@ -69,13 +69,18 @@ def parse_sectional_times(html: str) -> list[RunnerSectionals]:
 
 
 def _runner_rows(soup: BeautifulSoup) -> list[Tag]:
-    """Rows carrying a horse name with a brand number are the runner rows."""
+    """Rows carrying a horse name with a brand number are the runner rows.
+
+    The optional leading letter matches `values._NAME_BRAND`, which parses the cell
+    this test admits. A stricter filter here does not raise — it drops the runner and
+    leaves the race looking complete — so the two patterns have to move together.
+    """
     rows = []
     for row in soup.find_all("tr"):
         cells = row.find_all("td")
         if len(cells) < 4:
             continue
-        if re.search(r"\([A-Z]\d{3}\)", cells[2].get_text(" ", strip=True)):
+        if re.search(r"\([A-Z]?[A-Z]\d{3}\)", cells[2].get_text(" ", strip=True)):
             rows.append(row)
     return rows
 
