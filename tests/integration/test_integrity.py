@@ -35,8 +35,9 @@ from tests.doubles import RecordingFetcher
 from paddock.db.models import FetchedPage, IngestRun, Meeting, Race, Runner
 from paddock.db.session import session_scope
 from paddock.ingest import pipeline
-from paddock.ingest.integrity import check_integrity
+from paddock.ingest.integrity import check_integrity, verify_season
 from paddock.ingest.pipeline import ingest_meeting
+from paddock.ingest.racing_calendar import PublishedMeeting
 
 pytestmark = pytest.mark.integration
 
@@ -217,3 +218,94 @@ def test_a_meeting_whose_page_is_gone_is_unverifiable_not_clean() -> None:
     assert not report.clean
     unverifiable = [f for f in report.findings if f.check == "unverifiable"]
     assert [f.race_dates for f in unverifiable] == [[HV_DATE]]
+
+
+# ── Against what HKJC said it would run ─────────────────────────────────────────
+#
+# The calendar is injected rather than loaded, so these tests state a small season
+# instead of needing all 88. The real 2024-25 sheet has its own tests in
+# `tests/unit/test_racing_calendar.py`.
+#
+# Only HV_DATE and IMPOSTOR_DATE fall inside 2024-25; ST_DATE belongs to the season
+# after it, which is what `test_another_seasons_meeting_is_not_counted` is about.
+
+
+def _published(*rows: tuple[dt.date, str]) -> list[PublishedMeeting]:
+    return [PublishedMeeting(race_date=day, racecourse=course) for day, course in rows]
+
+
+def test_a_corpus_that_matches_the_calendar_passes() -> None:
+    _ingest_both_meetings()
+
+    report = verify_season("2024-25", _published((HV_DATE, "HV")))
+
+    assert report.passed, report
+    assert report.published == 1
+    assert report.ingested == 1
+
+
+def test_another_seasons_meeting_is_not_counted() -> None:
+    """Both backfills land in one database, so checking 2024-25 must not see 2025-26
+    as 88 unannounced meetings."""
+    _ingest_both_meetings()
+
+    report = verify_season("2024-25", _published((HV_DATE, "HV")))
+
+    assert ST_DATE not in report.unpublished
+    assert report.ingested == 1, "the 2025-26 meeting is out of scope, not a finding"
+
+
+def test_a_meeting_hkjc_announced_and_we_do_not_have_is_named() -> None:
+    """Named, not counted. "86 of 88" is a number to worry at; a list of dates is
+    something to go and re-run."""
+    _ingest_both_meetings()
+
+    report = verify_season("2024-25", _published((HV_DATE, "HV"), (IMPOSTOR_DATE, "ST")))
+
+    assert report.missing == [IMPOSTOR_DATE]
+
+
+def test_a_few_missing_meetings_are_reported_but_tolerated() -> None:
+    """The calendar is published six weeks early, so a meeting can be abandoned —
+    2024-11-13 lost its last three races to a typhoon signal. A handful of absences
+    is a thing to look at, not a failed backfill."""
+    _ingest_both_meetings()
+
+    report = verify_season("2024-25", _published((HV_DATE, "HV"), (IMPOSTOR_DATE, "ST")))
+
+    assert report.missing
+    assert report.passed, "one abandoned meeting must not fail the season"
+
+
+def test_more_than_a_handful_missing_does_not_pass() -> None:
+    """T11's ±3, applied to an exact list rather than a count."""
+    _ingest_both_meetings()
+    absent = [(dt.date(2025, 1, 7 + n), "ST") for n in range(4)]
+
+    report = verify_season("2024-25", _published((HV_DATE, "HV"), *absent))
+
+    assert len(report.missing) == 4
+    assert not report.passed
+
+
+def test_a_meeting_the_calendar_never_listed_is_named() -> None:
+    """A rescheduled meeting looks like this — and so does a fallback that got past
+    the guard, which is why it is surfaced rather than assumed benign."""
+    _ingest_both_meetings()
+    _clone_meeting_onto(HV_DATE, IMPOSTOR_DATE)
+
+    report = verify_season("2024-25", _published((HV_DATE, "HV")))
+
+    assert report.unpublished == [IMPOSTOR_DATE]
+
+
+def test_a_racecourse_that_disagrees_never_passes() -> None:
+    """The one difference that cannot be a scheduling change. A meeting that ran at
+    all ran at exactly one of two venues, so the calendar and the going table cannot
+    both be right — and the going table is what the whole backfill trusts."""
+    _ingest_both_meetings()
+
+    report = verify_season("2024-25", _published((HV_DATE, "ST")))
+
+    assert report.venue_mismatches == [(HV_DATE, "ST", "HV")]
+    assert not report.passed, "a single one of these is fatal — no tolerance applies"

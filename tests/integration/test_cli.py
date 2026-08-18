@@ -292,3 +292,23 @@ def test_integrity_says_when_there_is_nothing_to_check() -> None:
     result = runner.invoke(app, ["check", "integrity"])
 
     assert "0 meetings" in result.output
+
+
+def test_checking_a_season_we_have_no_calendar_for_says_so() -> None:
+    """Rather than reporting 88 missing meetings, which is what an empty list would
+    look like and would send someone re-running a backfill that was fine."""
+    result = runner.invoke(app, ["check", "season", "--season", "2019-20"])
+
+    assert result.exit_code == 1
+    assert "no published calendar" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_checking_a_season_names_the_meetings_it_could_not_find() -> None:
+    """An empty corpus is the extreme case of a backfill that has not run: all 88
+    announced meetings absent, each one named."""
+    result = runner.invoke(app, ["check", "season", "--season", "2024-25"])
+
+    assert result.exit_code == 1
+    assert "88 announced" in result.output
+    assert "2024-10-01" in result.output, "the National Day meeting, by date"

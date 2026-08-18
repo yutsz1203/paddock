@@ -42,8 +42,9 @@ from paddock.ingest.date_guard import FallbackDetectedError, MeetingHeaderMissin
 from paddock.ingest.dates import dates_for_season, season_bounds
 from paddock.ingest.http import HkjcClient
 from paddock.ingest.incident_report import ReportParseError
-from paddock.ingest.integrity import IntegrityReport, check_integrity
+from paddock.ingest.integrity import IntegrityReport, check_integrity, verify_season
 from paddock.ingest.pipeline import ingest_meeting
+from paddock.ingest.racing_calendar import published_meetings
 from paddock.ingest.results import ResultsParseError
 
 app = typer.Typer(
@@ -250,6 +251,46 @@ def _report_integrity(report: IntegrityReport) -> bool:
         dates = ", ".join(day.isoformat() for day in finding.race_dates)
         typer.secho(f"  {finding.check}  {dates}: {finding.detail}", fg=typer.colors.RED, err=True)
     return False
+
+
+@check_app.command("season")
+def check_season_command(season: str = SeasonOption) -> None:
+    """Hold a backfilled season up against the fixture list HKJC published for it.
+
+    Independent of everything the backfill used: the walk is driven by generated
+    candidates and the date guard, neither of which has seen this calendar.
+    """
+    published = published_meetings(season)
+    if published is None:
+        typer.secho(
+            f"no published calendar for {season} — add one at "
+            f"src/paddock/data/racing_calendar_{season}.json",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    report = verify_season(season, published)
+    typer.echo(f"{season}: {report.published} announced by HKJC, {report.ingested} ingested")
+
+    # Named rather than counted, in both directions: a count is something to worry
+    # at, and a list of dates is something to go and re-run.
+    for day in report.missing:
+        typer.secho(f"  missing      {day} — announced, not in the corpus", fg=typer.colors.YELLOW)
+    for day in report.unpublished:
+        typer.secho(
+            f"  unannounced  {day} — in the corpus, not on the calendar", fg=typer.colors.YELLOW
+        )
+    for day, announced, stored in report.venue_mismatches:
+        typer.secho(
+            f"  wrong venue  {day} — calendar says {announced}, we stored {stored}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+
+    if not report.passed:
+        raise typer.Exit(1)
+    typer.secho(f"{season}: verified against the published calendar", fg=typer.colors.GREEN)
 
 
 @app.command("serve")

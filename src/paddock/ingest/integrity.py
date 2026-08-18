@@ -23,11 +23,17 @@ pages.
 
 A meeting whose page is missing from the archive is reported, not passed. "Verified"
 and "could not check" are the two answers an audit must never blur.
+
+`verify_season` is the third check and the only one that looks outside the database,
+holding a season up against the fixture list HKJC published before it ran. It lives
+here rather than in `racing_calendar.py` because it is an audit; what it audits just
+happens to have an external yardstick.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -37,7 +43,16 @@ from sqlalchemy.orm import Session
 from paddock.db.models import Meeting, Race, Runner
 from paddock.db.session import session_scope
 from paddock.ingest.date_guard import MeetingHeaderMissingError, parse_declared_meeting
+from paddock.ingest.dates import season_bounds
 from paddock.ingest.pages import latest_page
+from paddock.ingest.racing_calendar import PublishedMeeting
+
+# How many announced meetings may be absent before a season stops counting as
+# backfilled. T11 set it at three, on the reasoning that HKJC publishes the calendar
+# six weeks early and the occasional meeting is abandoned to weather. With the
+# published list in hand the check names exactly which dates are missing, so this is
+# only the pass/fail line — the list is the part a human acts on.
+ABANDONED_TOLERANCE = 3
 
 
 @dataclass(frozen=True)
@@ -165,3 +180,69 @@ def _dates_disagreeing_with_their_page(session: Session, meetings: list[Meeting]
             )
 
     return findings
+
+
+@dataclass(frozen=True)
+class SeasonReport:
+    """One season, measured against the fixture list HKJC published before it ran."""
+
+    season: str
+    published: int
+    ingested: int
+    missing: list[dt.date]
+    """Announced, and not in the corpus. Usually an abandoned meeting; in bulk, a
+    backfill that stopped early."""
+    unpublished: list[dt.date]
+    """In the corpus, and never announced. A rescheduled meeting looks like this —
+    and so does a fallback that got past the guard, which is why it is surfaced."""
+    venue_mismatches: list[tuple[dt.date, str, str]]
+    """(date, published, stored). Fatal on its own: a meeting that ran at all ran at
+    exactly one of two racecourses, so these two sources cannot both be right."""
+
+    @property
+    def passed(self) -> bool:
+        return not self.venue_mismatches and len(self.missing) <= ABANDONED_TOLERANCE
+
+
+def verify_season(
+    season: str, published: Sequence[PublishedMeeting], session: Session | None = None
+) -> SeasonReport:
+    """Compare what was ingested for `season` against what HKJC announced.
+
+    The calendar is passed in rather than loaded here so this stays a pure comparison
+    — and so the tests can state a two-meeting season instead of all 88.
+
+    Note what this is not: the backfill is driven by generated candidates and the
+    guard, neither of which has seen this list. Checking the result against a list
+    that produced it would only prove the copy worked.
+    """
+    if session is not None:
+        return _verify(session, season, published)
+    with session_scope() as own_session:
+        return _verify(own_session, season, published)
+
+
+def _verify(session: Session, season: str, published: Sequence[PublishedMeeting]) -> SeasonReport:
+    start, end = season_bounds(season)
+    stored: dict[dt.date, str] = {
+        row.race_date: row.racecourse
+        for row in session.execute(
+            select(Meeting.race_date, Meeting.racecourse).where(
+                Meeting.race_date.between(start, end)
+            )
+        )
+    }
+    announced = {meeting.race_date: meeting.racecourse for meeting in published}
+
+    return SeasonReport(
+        season=season,
+        published=len(announced),
+        ingested=len(stored),
+        missing=sorted(announced.keys() - stored.keys()),
+        unpublished=sorted(stored.keys() - announced.keys()),
+        venue_mismatches=[
+            (day, announced[day], stored[day])
+            for day in sorted(announced.keys() & stored.keys())
+            if announced[day] != stored[day]
+        ],
+    )
