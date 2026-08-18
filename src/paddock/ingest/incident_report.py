@@ -51,6 +51,12 @@ _NO_REPORT = "no report"
 # "6 DH" — dead heat for sixth.
 _DEAD_HEAT = re.compile(r"^(\d+)\s*DH$", re.I)
 
+# The going table opens with "Sha Tin - Turf A Course" or "Happy Valley - Turf B
+# Course". Matched by venue alone, because the surface after the dash varies (turf
+# courses A/B/C/C+3, and the all-weather track).
+_VENUE = re.compile(r"Sha Tin|Happy Valley")
+_RACECOURSE_CODES = {"Sha Tin": "ST", "Happy Valley": "HV"}
+
 
 @dataclass(frozen=True)
 class RunnerReport:
@@ -85,6 +91,9 @@ class RaceReport:
 @dataclass(frozen=True)
 class MeetingReport:
     race_date: dt.date
+    racecourse: str | None
+    """'ST' or 'HV', read from the going table. None when the page carried no going
+    table at all — see `_parse_racecourse` for why that is not guessed at."""
     races: list[RaceReport]
 
 
@@ -110,7 +119,27 @@ def parse_meeting_report(html: str, race_date: dt.date) -> MeetingReport:
         raise ReportParseError("no table.rirr elements — markup may have changed")
 
     races = [_parse_race(table) for table in tables]
-    return MeetingReport(race_date=race_date, races=races)
+    return MeetingReport(race_date=race_date, racecourse=_parse_racecourse(soup), races=races)
+
+
+def _parse_racecourse(soup: BeautifulSoup) -> str | None:
+    """Which of the two racecourses this meeting ran at, from the going table.
+
+    Backfill (T11) works from the season's date index, which carries dates and
+    nothing else — so the venue has to come from the page. The going table names it
+    once, in its own block ("Sha Tin - Turf A Course"), which is why the search is
+    scoped there: the stewards' narrative names the *other* course several times a
+    meeting, suspending a rider for a raceday at Happy Valley.
+
+    Returns None rather than falling back to a default. Every results and sectionals
+    request for the meeting carries the racecourse, so a guessed venue would fetch a
+    card's worth of empty pages and store a meeting with no result in it.
+    """
+    block = soup.select_one("div.data_go")
+    if block is None:
+        return None
+    match = _VENUE.search(block.get_text(" ", strip=True))
+    return _RACECOURSE_CODES[match.group(0)] if match else None
 
 
 def _parse_race(table: Tag) -> RaceReport:

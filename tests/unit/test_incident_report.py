@@ -239,3 +239,39 @@ def test_no_jockey_name_retains_a_claim_suffix(current_season) -> None:  # type:
     for race in current_season.races:
         for runner in race.runners:
             assert "(-" not in runner.jockey
+
+
+# ── Racecourse ──────────────────────────────────────────────────────────────────
+
+# Two venues, both seasons. The 2024-11-13 card is the shortened one, so this also
+# proves the going table is read independently of how many races ran.
+MEETING_VENUES = [
+    ("report_20260426_valid.html", dt.date(2026, 4, 26), "ST"),
+    ("report_20250907_season_opener.html", dt.date(2025, 9, 7), "ST"),
+    ("report_20250312_prior_season.html", dt.date(2025, 3, 12), "HV"),
+    ("report_20241113_prior_season.html", dt.date(2024, 11, 13), "HV"),
+]
+
+
+@pytest.mark.parametrize(("name", "day", "racecourse"), MEETING_VENUES)
+def test_the_report_says_which_racecourse_it_is(name: str, day: dt.date, racecourse: str) -> None:
+    """The season index carries dates and nothing else, so backfill reads the venue
+    from the page rather than being told it 88 times."""
+    assert parse_meeting_report(load(name), day).racecourse == racecourse
+
+
+def test_a_report_with_no_going_table_yields_no_racecourse() -> None:
+    """None rather than a guess: the wrong venue would send every results request
+    for the meeting to the other racecourse, and write the card without a result."""
+    html = load("report_20260426_valid.html").replace('class="data_go"', 'class="data_gone"')
+
+    assert parse_meeting_report(html, dt.date(2026, 4, 26)).racecourse is None
+
+
+def test_a_suspension_naming_the_other_venue_does_not_move_the_meeting() -> None:
+    """Stewards' text routinely names the *next* meeting's course ("suspended for
+    one raceday at Happy Valley"). Only the going table decides."""
+    report = parse_meeting_report(load("report_20260426_valid.html"), dt.date(2026, 4, 26))
+
+    assert "Happy Valley" in load("report_20260426_valid.html")
+    assert report.racecourse == "ST"

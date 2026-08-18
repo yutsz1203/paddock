@@ -45,7 +45,12 @@ from paddock.db.models import IncidentComment, IngestRun, Meeting, Race, Runner
 from paddock.db.session import session_scope
 from paddock.ingest.date_guard import FallbackDetectedError, require_genuine
 from paddock.ingest.entities import resolve_horse, resolve_jockey, resolve_trainer
-from paddock.ingest.incident_report import RaceReport, RunnerReport, parse_meeting_report
+from paddock.ingest.incident_report import (
+    RaceReport,
+    ReportParseError,
+    RunnerReport,
+    parse_meeting_report,
+)
 from paddock.ingest.pages import PageFetcher, fetch_page
 from paddock.ingest.results import (
     RaceResults,
@@ -100,18 +105,22 @@ class MeetingIngest:
 def ingest_meeting(
     client: PageFetcher,
     race_date: dt.date,
-    racecourse: str,
+    racecourse: str | None = None,
     *,
     refresh: bool = False,
 ) -> MeetingIngest:
     """Ingest one meeting end to end, idempotently and atomically.
 
     Args:
+        racecourse: 'ST' or 'HV'. Optional because backfill (T11) works from a list
+            of dates and has no venue to pass — left out, it is read from the
+            report page's going table.
         refresh: re-fetch every page instead of reading the archive. For a meeting
             whose stewards' report HKJC corrected after publication.
 
     Raises:
         FallbackDetectedError: the date has no meeting and HKJC served another one.
+        ReportParseError: no racecourse was given and the page did not name one.
         ResultsParseError: no race on the card had results, which means the endpoint
             changed rather than that one page was missing.
     """
@@ -123,12 +132,22 @@ def ingest_meeting(
         require_genuine(report_page.body, race_date)
         report = parse_meeting_report(report_page.body, race_date)
 
+        course = racecourse or report.racecourse
+        if course is None:
+            # Defaulting to Sha Tin would be right roughly half the time, and the
+            # other half would fetch eleven empty results pages and store a card
+            # with no result on it — which reads as a successful ingest.
+            raise ReportParseError(
+                f"the report for {race_date.isoformat()} named no racecourse and none "
+                "was given; pass --course"
+            )
+
         with session_scope() as session:
             return _write_meeting(
                 session,
                 client,
                 race_date=race_date,
-                racecourse=racecourse,
+                racecourse=course,
                 report_races=report.races,
                 source_url=report_page.url,
                 fetched_at=report_page.fetched_at,
