@@ -188,6 +188,9 @@ class SeasonReport:
 
     season: str
     published: int
+    """Meetings the sheet says ran — its own printed total, which excludes any it
+    marks abandoned."""
+    abandoned: int
     ingested: int
     missing: list[dt.date]
     """Announced, and not in the corpus. Usually an abandoned meeting; in bulk, a
@@ -232,13 +235,21 @@ def _verify(session: Session, season: str, published: Sequence[PublishedMeeting]
             )
         )
     }
+    # Two sets, and the difference between them is the abandoned meetings. What the
+    # corpus should contain is only what ran; what counts as announced is everything
+    # on the sheet, so a meeting abandoned part-way that still published a report is
+    # not then reported as a date HKJC never scheduled.
     announced = {meeting.race_date: meeting.racecourse for meeting in published}
+    expected = {
+        meeting.race_date: meeting.racecourse for meeting in published if not meeting.abandoned
+    }
 
     return SeasonReport(
         season=season,
-        published=len(announced),
+        published=len(expected),
+        abandoned=len(announced) - len(expected),
         ingested=len(stored),
-        missing=sorted(announced.keys() - stored.keys()),
+        missing=sorted(expected.keys() - stored.keys()),
         unpublished=sorted(stored.keys() - announced.keys()),
         venue_mismatches=[
             (day, announced[day], stored[day])

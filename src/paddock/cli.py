@@ -271,7 +271,12 @@ def check_season_command(season: str = SeasonOption) -> None:
         raise typer.Exit(1)
 
     report = verify_season(season, published)
-    typer.echo(f"{season}: {report.published} announced by HKJC, {report.ingested} ingested")
+    # Abandoned meetings are named in the header rather than left out of it: "88
+    # announced, 87 ingested" reads as a lost meeting until you know one never ran.
+    abandoned = f", {report.abandoned} abandoned" if report.abandoned else ""
+    typer.echo(
+        f"{season}: {report.published} announced by HKJC{abandoned}, {report.ingested} ingested"
+    )
 
     # Named rather than counted, in both directions: a count is something to worry
     # at, and a list of dates is something to go and re-run.

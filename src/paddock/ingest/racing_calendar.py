@@ -20,21 +20,35 @@ it would run and names every difference.
 
 ## It is a plan, not a record
 
-Published six weeks before the season, so a meeting can be abandoned (13 November
-2024 lost its last three races to a typhoon signal) or moved. A difference between
-this list and the corpus is therefore a thing to look at, not proof of a bug — which
-is why the check reports differences rather than failing on them. The exception is a
-racecourse that disagrees: a meeting that ran at all ran at exactly one of two
-venues, and that is a fact the calendar and the going table cannot both be right
-about.
+Published before the season, so a meeting can be abandoned or moved. HKJC reissues
+the sheet when that happens — the 2025/26 file here is the amendment as at 4
+February 2026 — but a difference between it and the corpus is still a thing to look
+at rather than proof of a bug, which is why the check reports differences instead of
+failing on them. The exception is a racecourse that disagrees: a meeting that ran at
+all ran at exactly one of two venues, and that is a fact the calendar and the going
+table cannot both be right about.
+
+## Abandoned meetings are kept, and marked
+
+The 2025/26 sheet lists 89 dates and totals 88, because 24 September 2025 at Happy
+Valley was abandoned. HKJC's own JSON index omits that date entirely, which says the
+index is a record of what ran rather than a plan of what was intended.
+
+The row is kept rather than deleted, because a deleted row and a date nobody ever
+mentioned are indistinguishable — and "the backfill lost a meeting" is exactly the
+shape this file exists to detect. Marked, it is excluded from what the corpus is
+expected to contain while still counting as announced, so a meeting that was
+abandoned part-way and published a partial report is not then reported as one HKJC
+never scheduled.
 
 ## Transcription
 
-Typed from the published PDF, then checked against the three totals the page prints
-for itself: 88 meetings, 51 at Sha Tin (40 day + 7 twilight + 4 night), 37 at Happy
-Valley (1 day + 36 night). `test_racing_calendar.py` re-asserts all three, so a
-mis-keyed row fails the suite rather than quietly becoming the thing everything else
-is measured against.
+Typed from the published PDFs, then checked against the totals each sheet prints for
+itself — 88 meetings for both seasons, split 51/37 in 2024-25 and 52/36 in 2025-26.
+`test_racing_calendar.py` re-asserts all of them, so a mis-keyed row fails the suite
+rather than quietly becoming the thing everything else is measured against. For
+2025-26 there is a stronger check available and it is used: the transcription is
+compared date for date against HKJC's own JSON index, and they agree exactly.
 """
 
 from __future__ import annotations
@@ -49,6 +63,9 @@ from importlib import resources
 class PublishedMeeting:
     race_date: dt.date
     racecourse: str
+    abandoned: bool = False
+    """Announced, and did not run. Excluded from what the corpus should contain, but
+    still announced — see the module docstring."""
 
 
 def published_meetings(season: str) -> list[PublishedMeeting] | None:
@@ -64,6 +81,10 @@ def published_meetings(season: str) -> list[PublishedMeeting] | None:
 
     payload = json.loads(source.read_text(encoding="utf-8"))
     return [
-        PublishedMeeting(race_date=dt.date.fromisoformat(row["date"]), racecourse=row["racecourse"])
+        PublishedMeeting(
+            race_date=dt.date.fromisoformat(row["date"]),
+            racecourse=row["racecourse"],
+            abandoned=row.get("abandoned", False),
+        )
         for row in payload["meetings"]
     ]

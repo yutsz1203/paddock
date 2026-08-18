@@ -312,3 +312,12 @@ def test_checking_a_season_names_the_meetings_it_could_not_find() -> None:
     assert result.exit_code == 1
     assert "88 announced" in result.output
     assert "2024-10-01" in result.output, "the National Day meeting, by date"
+
+
+def test_a_season_with_an_abandoned_meeting_says_so_in_the_header() -> None:
+    """24 Sep 2025 never ran. Without saying so, "88 announced, 87 ingested" reads as
+    a meeting the backfill lost."""
+    result = runner.invoke(app, ["check", "season", "--season", "2025-26"])
+
+    assert "88 announced by HKJC, 1 abandoned" in result.output
+    assert "2025-09-24" not in result.output, "not listed as missing — it never ran"

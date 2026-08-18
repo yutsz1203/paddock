@@ -309,3 +309,40 @@ def test_a_racecourse_that_disagrees_never_passes() -> None:
 
     assert report.venue_mismatches == [(HV_DATE, "ST", "HV")]
     assert not report.passed, "a single one of these is fatal — no tolerance applies"
+
+
+def test_an_abandoned_meeting_is_not_a_meeting_we_lost() -> None:
+    """24 September 2025 never ran, so its absence from the corpus is correct. Counted
+    as missing it would burn one of the three absences the season is allowed."""
+    _ingest_both_meetings()
+
+    report = verify_season(
+        "2024-25",
+        [
+            PublishedMeeting(race_date=HV_DATE, racecourse="HV"),
+            PublishedMeeting(race_date=IMPOSTOR_DATE, racecourse="ST", abandoned=True),
+        ],
+    )
+
+    assert report.missing == []
+    assert report.abandoned == 1
+    assert report.published == 1, "the sheet's total counts meetings that ran"
+
+
+def test_an_abandoned_meeting_that_still_published_a_report_is_not_a_stranger() -> None:
+    """Abandoned part-way is a real state — 2024-11-13 lost three races and still has
+    a full report. If one turns up in the corpus it was announced, so it must not be
+    reported as a date HKJC never scheduled."""
+    _ingest_both_meetings()
+    _clone_meeting_onto(HV_DATE, IMPOSTOR_DATE)
+
+    report = verify_season(
+        "2024-25",
+        [
+            PublishedMeeting(race_date=HV_DATE, racecourse="HV"),
+            PublishedMeeting(race_date=IMPOSTOR_DATE, racecourse="HV", abandoned=True),
+        ],
+    )
+
+    assert report.unpublished == []
+    assert report.passed
