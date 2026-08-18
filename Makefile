@@ -27,7 +27,9 @@ typecheck:  ## Type check
 test-unit:  ## Unit tests only (no database)
 	uv run pytest -m "not integration"
 
-test:  ## All tests (requires Postgres)
+# The suite runs against `<database>_test`, which tests/conftest.py creates and
+# migrates on first use — never against the corpus. `make db` is for the real one.
+test:  ## All tests (requires Postgres; uses its own _test database)
 	uv run pytest
 
 # Deselected by default so CI never depends on Hugging Face being up. Run this

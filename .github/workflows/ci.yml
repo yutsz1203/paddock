@@ -42,6 +42,9 @@ jobs:
       # -m 'not live' is the pytest default (see pyproject.toml): CI never touches
       # racing.hkjc.com. Parsers are tested against committed HTML fixtures instead,
       # so a CI failure always means our code changed, never that HKJC did.
+      # DATABASE_URL names the *base* database; tests/conftest.py appends `_test`,
+      # creates it and migrates it. Deliberately the same derivation CI and a laptop
+      # both take, so "works on my machine" and "works in CI" cannot diverge here.
       - name: Test
         run: uv run pytest
         env:
