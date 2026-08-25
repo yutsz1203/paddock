@@ -38,9 +38,9 @@ def _clean() -> Iterator[None]:
         for horse_id in (TEST_HORSE, TEST_HORSE_B):
             session.query(HorseAlias).filter_by(horse_id=horse_id).delete()
             session.query(Horse).filter_by(horse_id=horse_id).delete()
-        session.query(Jockey).filter(Jockey.name_en.in_(["Z Testrider", "Y L Testchung"])).delete(
-            synchronize_session=False
-        )
+        session.query(Jockey).filter(
+            Jockey.name_en.in_(["Z Testrider", "Y L Testchung", "測試騎師"])
+        ).delete(synchronize_session=False)
         session.query(Trainer).filter(Trainer.name_en == "C S Testshum").delete(
             synchronize_session=False
         )
@@ -175,6 +175,42 @@ def test_jockey_chinese_name_fills_in() -> None:
     with session_scope() as session:
         rows = session.scalars(select(Jockey).where(Jockey.name_en == "Z Testrider")).all()
         assert len(rows) == 1
+
+
+def test_a_person_first_seen_in_chinese_gets_their_english_name_back() -> None:
+    """A Chinese-only sighting parks the Chinese string in `name_en`, which is NOT NULL.
+
+    That placeholder has to be repaired when the English name arrives, or the row is
+    unreachable by the name every other page uses — and the next English-only
+    sighting creates a second person for the same rider.
+
+    Latent until T17a: ingestion has always passed English first. `ingest
+    translations` is the first pass that can meet a person in Chinese alone.
+    """
+    with session_scope() as session:
+        chinese_only = resolve_jockey(session, name_zh="測試騎師")
+        assert chinese_only.name_en == "測試騎師", "the placeholder this test is about"
+
+        repaired = resolve_jockey(session, name_en="Z Testrider", name_zh="測試騎師")
+
+        assert repaired.id == chinese_only.id, "one rider, not two"
+        assert repaired.name_en == "Z Testrider"
+        assert repaired.name_zh == "測試騎師"
+
+    with session_scope() as session:
+        rows = session.scalars(select(Jockey).where(Jockey.name_zh == "測試騎師")).all()
+        assert len(rows) == 1
+
+
+def test_a_real_english_name_is_not_overwritten_by_a_chinese_sighting() -> None:
+    """The repair is for the placeholder only. A row that already carries a real
+    English name keeps it, whatever a Chinese page calls the same person."""
+    with session_scope() as session:
+        first = resolve_jockey(session, name_en="Z Testrider", name_zh="測試騎師")
+        again = resolve_jockey(session, name_zh="測試騎師")
+
+        assert again.id == first.id
+        assert again.name_en == "Z Testrider"
 
 
 def test_trainer_resolution_is_idempotent() -> None:

@@ -27,6 +27,14 @@ the results page — the number is the weight allowance for that ride, not part 
 they are. Six of the 33 distinct jockey strings in one meeting carry a claim, so
 without stripping it the same rider becomes two rows and every per-jockey statistic
 splits between them.
+
+## A Chinese-only sighting parks a placeholder, and the placeholder is repaired
+
+``jockeys.name_en`` and ``trainers.name_en`` are NOT NULL, so a person first seen on
+a Chinese page is stored under their Chinese name in both columns. When the English
+name arrives, it replaces that placeholder. Otherwise the row is unreachable by the
+name every English page uses, and the next English-only sighting creates a second
+person for one rider. A row that already carries a real English name keeps it.
 """
 
 from __future__ import annotations
@@ -199,5 +207,10 @@ def _resolve_person[T: (Jockey, Trainer)](
 
     if chinese and not person.name_zh:
         person.name_zh = chinese
+    if english and person.name_en == person.name_zh:
+        # The Chinese placeholder below, now that the English name has arrived. Left
+        # in place the row is unreachable by the name every English page uses, so the
+        # next English-only sighting would create a second person for one rider.
+        person.name_en = english
     session.flush()
     return person
