@@ -108,7 +108,7 @@ def parse_race_results(html: str) -> RaceResults:
     """
     soup = BeautifulSoup(html, "lxml")
 
-    table = _results_table(soup)
+    table = results_table(soup)
     if table is None:
         raise ResultsParseError(
             "no results table on the page — the requested meeting does not exist "
@@ -135,7 +135,9 @@ def parse_race_results(html: str) -> RaceResults:
     )
 
 
-def _results_table(soup: BeautifulSoup) -> Tag | None:
+def results_table(soup: BeautifulSoup) -> Tag | None:
+    """The runner table, or None. Shared with the Chinese page, whose table is
+    the same one with the names in the other language (`translations.py`)."""
     for table in soup.find_all("table"):
         classes = table.get("class") or []
         if "draggable" in classes:
@@ -233,7 +235,7 @@ def _parse_runner(row: Tag) -> ResultRunner | None:
         horse_no=as_int(horse_no),
         horse_name=name,
         brand_no=brand_no,
-        horse_id=_horse_id_from(tds[2]),
+        horse_id=horse_id_from(tds[2]),
         jockey=jockey,
         trainer=trainer,
         carried_weight_lb=as_int(act_wt),
@@ -247,7 +249,7 @@ def _parse_runner(row: Tag) -> ResultRunner | None:
     )
 
 
-def _horse_id_from(cell: Tag) -> str | None:
+def horse_id_from(cell: Tag) -> str | None:
     """Read HK_YYYY_Bxxx from the horse cell's link, if it has one."""
     link = cell.find("a")
     if not isinstance(link, Tag):
