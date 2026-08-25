@@ -19,6 +19,7 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import select
+from tests.doubles import FakeEmbedder
 from typer.testing import CliRunner
 
 from paddock.cli import app
@@ -197,6 +198,71 @@ def test_embedding_an_unknown_meeting_says_so() -> None:
     assert result.exit_code == 1
     assert "2026-04-26" in result.output
     assert "Traceback" not in result.output
+
+
+def test_embed_needs_to_be_told_what_to_embed() -> None:
+    """A bare `paddock embed` must not silently start a half-hour corpus run."""
+    result = runner.invoke(app, ["embed"])
+
+    assert result.exit_code != 0
+    assert "--all" in result.output
+
+
+def test_embedding_one_meeting_needs_both_the_date_and_the_course() -> None:
+    result = runner.invoke(app, ["embed", "--date", "20260426"])
+
+    assert result.exit_code != 0
+    assert "--course" in result.output
+
+
+def test_a_meeting_and_the_whole_corpus_cannot_be_asked_for_at_once() -> None:
+    result = runner.invoke(app, ["embed", "--all", "--date", "20260426", "--course", "ST"])
+
+    assert result.exit_code != 0
+    assert "--all" in result.output
+
+
+def test_an_empty_corpus_embeds_nothing_and_says_so() -> None:
+    """Nothing is ingested in this module by default, so the walk finds no meetings."""
+    result = runner.invoke(app, ["embed", "--all"])
+
+    assert result.exit_code == 0
+    assert "0 meetings" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_a_comment_with_no_chunk_fails_the_vector_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A comment nothing embedded is invisible to retrieval and healthy in SQL."""
+    _archive(RACE_DATE, "report_20260426_valid.html")
+    runner.invoke(app, ["ingest", "meeting", "--date", "20260426", "--course", "ST"])
+    _use_a_fake_model(monkeypatch)
+
+    result = runner.invoke(app, ["check", "vectors", "--repeats", "1"])
+
+    assert result.exit_code == 1
+    assert "no chunk" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_the_vector_check_reports_coverage_and_latency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _archive(RACE_DATE, "report_20260426_valid.html")
+    runner.invoke(app, ["ingest", "meeting", "--date", "20260426", "--course", "ST"])
+    _use_a_fake_model(monkeypatch)
+    runner.invoke(app, ["embed", "--date", "20260426", "--course", "ST"])
+
+    result = runner.invoke(app, ["check", "vectors", "--repeats", "1"])
+
+    assert result.exit_code == 0
+    assert "p95" in result.output
+
+
+def _use_a_fake_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """So the suite never downloads 2.2 GB to prove that a command prints a number."""
+    monkeypatch.setattr("paddock.cli.get_embedder", FakeEmbedder)
 
 
 # ── Backfilling a season ────────────────────────────────────────────────────────

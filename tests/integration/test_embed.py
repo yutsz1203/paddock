@@ -15,17 +15,16 @@ normally produce these rows is T10; embedding does not wait for it.
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import time
 from collections.abc import Iterator, Sequence
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from tests.doubles import FakeEmbedder
 
 from paddock.db.models import Chunk, Horse, IncidentComment, Meeting, Race
 from paddock.db.session import session_scope
-from paddock.embed.embedder import EMBEDDING_DIM
 from paddock.embed.store import embed_meeting
 
 pytestmark = pytest.mark.integration
@@ -49,32 +48,6 @@ EXPECTED_CHUNKS = [
     "Veterinary examination after the race revealed no abnormality.",
     "The trainer was advised the horse must trial before racing again.",
 ]
-
-
-class FakeEmbedder:
-    """Deterministic vectors from a hash — same text, same vector, no model.
-
-    Distances between these are meaningless, which is the point: any test that needs
-    real semantics must ask for the real model rather than quietly passing here.
-    """
-
-    dim = EMBEDDING_DIM
-
-    def __init__(self) -> None:
-        self.calls: list[list[str]] = []
-
-    def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        self.calls.append(list(texts))
-        return [self._vector(text) for text in texts]
-
-    @staticmethod
-    def _vector(text: str) -> list[float]:
-        digest = hashlib.sha256(text.encode()).digest()
-        return [digest[i % len(digest)] / 255.0 for i in range(EMBEDDING_DIM)]
-
-    @property
-    def embedded_texts(self) -> list[str]:
-        return [text for call in self.calls for text in call]
 
 
 def _seed(comments: Sequence[str] = tuple(COMMENTS)) -> int:

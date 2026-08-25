@@ -6,11 +6,13 @@ to import a fake LLM — or a fake HKJC — by accident.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterator, Mapping, Sequence
 
 import httpx
 
+from paddock.db.models import EMBEDDING_DIM
 from paddock.llm.provider import Message
 
 # Split into pieces that keep their trailing whitespace, so joining the stream is
@@ -85,3 +87,36 @@ class RecordingFetcher:
             raise AssertionError(
                 f"no canned page for {url!r}; known: {sorted(self.pages)}"
             ) from None
+
+
+class FakeEmbedder:
+    """Deterministic vectors from a hash — same text, same vector, no model.
+
+    Distances between these are meaningless, which is the point: any test that needs
+    real semantics must ask for the real model rather than quietly passing here.
+
+    `fail_on` makes one text raise. Embedding is the one step in this project that
+    takes hours, so what a run does when it dies half-way is a property worth a test,
+    and the only cheap way to reach that state is to break the encoder on purpose.
+    """
+
+    dim = EMBEDDING_DIM
+
+    def __init__(self, *, fail_on: str | None = None) -> None:
+        self.calls: list[list[str]] = []
+        self.fail_on = fail_on
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        self.calls.append(list(texts))
+        if self.fail_on is not None and any(self.fail_on in text for text in texts):
+            raise RuntimeError(f"encoder refused {self.fail_on!r}")
+        return [self._vector(text) for text in texts]
+
+    @staticmethod
+    def _vector(text: str) -> list[float]:
+        digest = hashlib.sha256(text.encode()).digest()
+        return [digest[i % len(digest)] / 255.0 for i in range(EMBEDDING_DIM)]
+
+    @property
+    def embedded_texts(self) -> list[str]:
+        return [text for call in self.calls for text in call]

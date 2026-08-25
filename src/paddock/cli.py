@@ -35,6 +35,12 @@ from sqlalchemy import select
 
 from paddock.db.models import Meeting
 from paddock.db.session import session_scope
+from paddock.embed.corpus import (
+    MeetingOutcome,
+    benchmark_search,
+    chunk_coverage,
+    embed_corpus,
+)
 from paddock.embed.embedder import get_embedder
 from paddock.embed.store import embed_meeting
 from paddock.ingest.backfill import Outcome, backfill
@@ -104,6 +110,31 @@ SeasonOption = typer.Option(
 )
 CourseOption = typer.Option(..., "--course", help="Racecourse: ST (Sha Tin) or HV (Happy Valley).")
 
+# The embed command takes a meeting or the whole corpus, so neither half of the
+# meeting pair can be required. What replaces `...` is the check in `_embed_target`:
+# a bare `paddock embed` is a mistake, not a request to start a half-hour run.
+OptionalDateOption = typer.Option(
+    None, "--date", metavar="YYYYMMDD", help="Meeting date.", parser=_parse_date
+)
+OptionalCourseOption = typer.Option(
+    None, "--course", help="Racecourse: ST (Sha Tin) or HV (Happy Valley)."
+)
+AllOption = typer.Option(False, "--all", help="Embed every stored meeting instead of one.")
+SinceOption = typer.Option(
+    None,
+    "--since",
+    metavar="YYYYMMDD",
+    help="With --all: skip meetings before this date.",
+    parser=_parse_date,
+)
+UntilOption = typer.Option(
+    None,
+    "--until",
+    metavar="YYYYMMDD",
+    help="With --all: skip meetings after this date.",
+    parser=_parse_date,
+)
+
 
 @ingest_app.command("meeting")
 def ingest_meeting_command(
@@ -139,10 +170,52 @@ def ingest_meeting_command(
 
 @app.command("embed")
 def embed_command(
-    date: dt.date = DateOption,
-    course: Racecourse = CourseOption,
+    date: dt.date | None = OptionalDateOption,
+    course: Racecourse | None = OptionalCourseOption,
+    all_meetings: bool = AllOption,
+    since: dt.date | None = SinceOption,
+    until: dt.date | None = UntilOption,
 ) -> None:
-    """Embed one meeting's incident comments, skipping text that has not changed."""
+    """Embed incident comments, skipping text that has not changed.
+
+    One meeting with `--date` and `--course`, or the whole corpus with `--all`.
+    """
+    meeting = _embed_target(date, course, all_meetings=all_meetings, since=since, until=until)
+    if meeting is None:
+        _embed_corpus(since=since, until=until)
+    else:
+        _embed_one_meeting(*meeting)
+
+
+def _embed_target(
+    date: dt.date | None,
+    course: Racecourse | None,
+    *,
+    all_meetings: bool,
+    since: dt.date | None,
+    until: dt.date | None,
+) -> tuple[dt.date, Racecourse] | None:
+    """The meeting to embed, or `None` for the whole corpus.
+
+    Every ambiguous combination is refused here, before the model is loaded or a walk
+    is started. A bare `paddock embed` is the one that matters: read as "the corpus"
+    it starts half an hour of CPU that nobody asked for.
+    """
+    if all_meetings:
+        if date is not None or course is not None:
+            raise typer.BadParameter("--all embeds every meeting; drop --date and --course")
+        return None
+
+    if since is not None or until is not None:
+        raise typer.BadParameter("--since and --until narrow --all, not one meeting")
+    if date is None and course is None:
+        raise typer.BadParameter("give --date and --course for one meeting, or --all")
+    if date is None or course is None:
+        raise typer.BadParameter("--date and --course go together")
+    return date, course
+
+
+def _embed_one_meeting(date: dt.date, course: Racecourse) -> None:
     # Looked up before the embedder is asked for, so a mistyped date costs nothing:
     # `get_embedder` is cheap but the first `embed()` behind it reads 2.2 GB.
     with session_scope() as session:
@@ -165,6 +238,43 @@ def embed_command(
     typer.echo(
         f"{result.embedded} chunks embedded of {result.total} "
         f"from {result.comments} comments ({result.unchanged} unchanged, {result.deleted} deleted)"
+    )
+
+
+def _embed_corpus(*, since: dt.date | None, until: dt.date | None) -> None:
+    """Walk the corpus, printing each meeting as it lands.
+
+    Half an hour of CPU. Restartable: run it again and the meetings already done are
+    re-read but not re-encoded, so an interrupted run is resumed rather than repeated.
+    """
+    typer.echo("embedding the corpus (bge-m3 loads on first use, ~1 minute)...")
+    report = embed_corpus(
+        embedder=get_embedder(), since=since, until=until, on_outcome=_announce_meeting
+    )
+
+    typer.echo(
+        f"{report.meetings} meetings: {report.embedded} chunks embedded of {report.total} "
+        f"from {report.comments} comments "
+        f"({report.unchanged} unchanged, {report.deleted} deleted)"
+    )
+    for outcome in report.failed:
+        typer.secho(f"  {outcome.race_date} failed: {outcome.error}", fg=typer.colors.RED, err=True)
+    if report.failed:
+        # Nothing was corrupted — each failed meeting rolled its own transaction back
+        # — but a corpus with a hole in it must not exit green.
+        raise typer.Exit(1)
+
+
+def _announce_meeting(outcome: MeetingOutcome) -> None:
+    """One line per meeting. A half-hour run that prints nothing looks hung."""
+    result = outcome.result
+    if result is None:
+        typer.secho(f"  {outcome.race_date} {outcome.racecourse}  failed", fg=typer.colors.RED)
+        return
+    typer.secho(
+        f"  {outcome.race_date} {outcome.racecourse}  "
+        f"{result.embedded} embedded, {result.unchanged} unchanged",
+        fg=typer.colors.GREEN if result.embedded else typer.colors.WHITE,
     )
 
 
@@ -251,6 +361,51 @@ def _report_integrity(report: IntegrityReport) -> bool:
         dates = ", ".join(day.isoformat() for day in finding.race_dates)
         typer.secho(f"  {finding.check}  {dates}: {finding.detail}", fg=typer.colors.RED, err=True)
     return False
+
+
+@check_app.command("vectors")
+def check_vectors_command(
+    repeats: int = typer.Option(10, help="Timed searches per probe query."),
+    budget_ms: float = typer.Option(
+        100.0, "--budget-ms", help="Ceiling on p95 search latency (plan T12)."
+    ),
+) -> None:
+    """Say whether the corpus is fully embedded, and how fast it answers.
+
+    Two questions, because either alone passes on a corpus nobody can use: an index
+    that is fast because it is empty, and a complete one that takes a second a query.
+    """
+    with session_scope() as session:
+        coverage = chunk_coverage(session)
+
+    typer.echo(
+        f"coverage: {coverage.chunks} chunks from {coverage.with_chunks} "
+        f"of {coverage.comments} comments"
+    )
+    if coverage.without_chunks:
+        typer.secho(
+            f"  {coverage.without_chunks} comments have no chunk — run `paddock embed --all`",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+    if not coverage.chunks:
+        typer.secho("  nothing embedded — run `paddock embed --all`", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    typer.echo("timing (bge-m3 loads on first use, ~1 minute)...")
+    with session_scope() as session:
+        latency = benchmark_search(session, embedder=get_embedder(), repeats=repeats)
+
+    over = latency.p95_ms > budget_ms
+    typer.secho(
+        f"latency over {latency.samples} searches: p50 {latency.p50_ms:.1f} ms, "
+        f"p95 {latency.p95_ms:.1f} ms, max {latency.max_ms:.1f} ms",
+        fg=typer.colors.RED if over else typer.colors.GREEN,
+    )
+    if over:
+        typer.secho(f"  p95 is over the {budget_ms:.0f} ms budget", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
 
 
 @check_app.command("season")
