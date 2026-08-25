@@ -252,6 +252,12 @@ def _embed_corpus(*, since: dt.date | None, until: dt.date | None) -> None:
         embedder=get_embedder(), since=since, until=until, on_outcome=_announce_meeting
     )
 
+    if report.orphans_deleted:
+        typer.secho(
+            f"{report.orphans_deleted} orphan chunks deleted — their comment was re-ingested "
+            f"under a new id",
+            fg=typer.colors.YELLOW,
+        )
     typer.echo(
         f"{report.meetings} meetings: {report.embedded} chunks embedded of {report.total} "
         f"from {report.comments} comments "
@@ -388,9 +394,18 @@ def check_vectors_command(
             fg=typer.colors.RED,
             err=True,
         )
-        raise typer.Exit(1)
+    if coverage.orphans:
+        # Worse than a missing chunk: this one is in the index and answers questions,
+        # citing a comment id that no longer resolves. `embed --all` removes them.
+        typer.secho(
+            f"  {coverage.orphans} orphan chunks cite a comment that is gone — run "
+            f"`paddock embed --all`",
+            fg=typer.colors.RED,
+            err=True,
+        )
     if not coverage.chunks:
         typer.secho("  nothing embedded — run `paddock embed --all`", fg=typer.colors.RED, err=True)
+    if not coverage.complete or not coverage.chunks:
         raise typer.Exit(1)
 
     typer.echo("timing (bge-m3 loads on first use, ~1 minute)...")

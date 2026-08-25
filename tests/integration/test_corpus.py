@@ -34,6 +34,10 @@ pytestmark = pytest.mark.integration
 DATES = [dt.date(2099, 1, 3), dt.date(2099, 1, 10), dt.date(2099, 1, 17)]
 WINDOW = {"since": DATES[0], "until": DATES[-1]}
 
+# Comment ids nothing will ever hold, so an orphan seeded here cannot collide with
+# a real one that another test module is using.
+ORPHAN_IDS = [999_000_001, 999_000_002]
+
 # One comment per meeting, each naming its meeting so a failing encoder can be aimed
 # at exactly one of them.
 COMMENTS = {
@@ -99,6 +103,9 @@ def _delete_test_data() -> None:
                 synchronize_session=False
             )
         session.query(Horse).filter(Horse.horse_id.like("HK_2099_%")).delete(
+            synchronize_session=False
+        )
+        session.query(Chunk).filter(Chunk.source_id.in_(ORPHAN_IDS)).delete(
             synchronize_session=False
         )
 
@@ -213,6 +220,63 @@ def test_a_rerun_finishes_the_meeting_that_failed() -> None:
 
     assert report.embedded == 1
     assert second.embedded_texts == [COMMENTS[DATES[1]]]
+    assert _stored_chunks() == 3
+
+
+# ── Chunks whose comment is gone ────────────────────────────────────────────────
+
+
+def _orphan(source_id: int) -> None:
+    """A chunk citing a comment id that does not exist.
+
+    Not hypothetical: re-ingesting a meeting deletes its comments and writes new ones
+    with new ids, and `chunks.source_id` has no foreign key to follow them (T10). The
+    corpus carried 217 of these out of the T11 backfill.
+    """
+    with session_scope() as session:
+        session.add(
+            Chunk(
+                source_type="incident_comment",
+                source_id=source_id,
+                chunk_index=0,
+                text="Was hampered by a comment that no longer exists.",
+                chunk_meta={"race_date": DATES[0].isoformat(), "horse_id": "HK_2099_Z000"},
+                embedding=[0.0] * 1024,
+            )
+        )
+
+
+def _orphan_ids() -> list[int]:
+    with session_scope() as session:
+        return list(session.scalars(select(Chunk.source_id).where(Chunk.source_id.in_(ORPHAN_IDS))))
+
+
+def test_a_chunk_whose_comment_is_gone_is_counted_as_an_orphan() -> None:
+    _orphan(ORPHAN_IDS[0])
+
+    assert _coverage().orphans >= 1
+
+
+def test_the_run_deletes_chunks_whose_comment_is_gone() -> None:
+    """Nothing else can. `embed_meeting` walks meetings to comments to chunks, so a
+    chunk no comment points at is never visited, and it stays retrievable forever."""
+    _seed()
+    _orphan(ORPHAN_IDS[0])
+
+    report = embed_corpus(embedder=FakeEmbedder(), **WINDOW)
+
+    assert report.orphans_deleted >= 1
+    assert _orphan_ids() == []
+
+
+def test_a_live_comment_keeps_its_chunks() -> None:
+    """The prune is keyed on the comment being absent, not on the chunk being old."""
+    _seed()
+    embed_corpus(embedder=FakeEmbedder(), **WINDOW)
+
+    report = embed_corpus(embedder=FakeEmbedder(), **WINDOW)
+
+    assert report.orphans_deleted == 0
     assert _stored_chunks() == 3
 
 

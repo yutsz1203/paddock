@@ -23,7 +23,15 @@ from tests.doubles import FakeEmbedder
 from typer.testing import CliRunner
 
 from paddock.cli import app
-from paddock.db.models import FetchedPage, IngestRun, Meeting, Watermark
+from paddock.db.models import (
+    Chunk,
+    FetchedPage,
+    IncidentComment,
+    IngestRun,
+    Meeting,
+    Race,
+    Watermark,
+)
 from paddock.db.session import session_scope
 from paddock.ingest import pipeline
 from paddock.ingest.http import HkjcClient
@@ -39,6 +47,8 @@ FALLBACK_DATE = dt.date(2026, 4, 23)
 UNPARSEABLE_DATE = dt.date(2026, 4, 19)  # a real Sunday whose page will not parse
 ALL_DATES = (RACE_DATE, FALLBACK_DATE, UNPARSEABLE_DATE)
 RACES_IN_CARD = 11
+# A comment id nothing will ever hold, for the orphan-chunk case below.
+ORPHAN_ID = 999_000_003
 
 runner = CliRunner()
 
@@ -83,6 +93,20 @@ def _urls() -> list[str]:
 
 def _delete_everything() -> None:
     with session_scope() as session:
+        # Chunks first. They cite `incident_comments.id` with no foreign key, so
+        # deleting the meeting cascades the comments away and leaves the chunks
+        # behind as orphans — which is the corpus defect T12 exists to remove, and
+        # not something one test should hand to the next.
+        comment_ids = session.scalars(
+            select(IncidentComment.id)
+            .join(Race, Race.id == IncidentComment.race_id)
+            .join(Meeting, Meeting.id == Race.meeting_id)
+            .where(Meeting.race_date.in_(ALL_DATES))
+        ).all()
+        if comment_ids:
+            session.query(Chunk).filter(Chunk.source_id.in_(comment_ids)).delete(
+                synchronize_session=False
+            )
         for day in ALL_DATES:
             session.query(Meeting).filter(Meeting.race_date == day).delete(
                 synchronize_session=False
@@ -96,6 +120,7 @@ def _delete_everything() -> None:
         session.query(Watermark).filter(Watermark.source == INCIDENT_REPORT).delete(
             synchronize_session=False
         )
+        session.query(Chunk).filter(Chunk.source_id == ORPHAN_ID).delete(synchronize_session=False)
 
 
 def _archive(day: dt.date, report_fixture: str) -> None:
@@ -244,6 +269,36 @@ def test_a_comment_with_no_chunk_fails_the_vector_check(
     assert result.exit_code == 1
     assert "no chunk" in result.output
     assert "Traceback" not in result.output
+
+
+def test_a_chunk_whose_comment_is_gone_fails_the_vector_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retrievable, and citing a row nobody can resolve. It must not read as green."""
+    _archive(RACE_DATE, "report_20260426_valid.html")
+    runner.invoke(app, ["ingest", "meeting", "--date", "20260426", "--course", "ST"])
+    _use_a_fake_model(monkeypatch)
+    runner.invoke(app, ["embed", "--date", "20260426", "--course", "ST"])
+    _orphan_chunk()
+
+    result = runner.invoke(app, ["check", "vectors", "--repeats", "1"])
+
+    assert result.exit_code == 1
+    assert "orphan" in result.output
+
+
+def _orphan_chunk() -> None:
+    with session_scope() as session:
+        session.add(
+            Chunk(
+                source_type="incident_comment",
+                source_id=ORPHAN_ID,
+                chunk_index=0,
+                text="Was hampered by a comment that no longer exists.",
+                chunk_meta={"race_date": RACE_DATE.isoformat(), "horse_id": "HK_2099_Z000"},
+                embedding=[0.0] * 1024,
+            )
+        )
 
 
 def test_the_vector_check_reports_coverage_and_latency(
