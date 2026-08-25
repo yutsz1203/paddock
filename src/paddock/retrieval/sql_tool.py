@@ -38,6 +38,7 @@ caller to remember to fetch.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass
 
 from sqlalchemy import Select, func, literal, or_, select
@@ -182,6 +183,23 @@ def find_horse(session: Session, question: str) -> HorseMatch | None:
     The longest match wins, so "TESTBRED FLYER" is preferred over a horse called
     "FLYER". That is the whole disambiguation: two horses whose names both appear in
     one sentence is a case for the full router (T16), not for this.
+
+    **A name must stand as a word.** Checkpoint B found this function resolving "Which
+    runners in *Race* 5..." to a horse called ACE, and "...this *seas*on?" to one called
+    EASON. The corpus holds 39 horses with names of five characters or fewer, so a bare
+    substring test matches inside ordinary English. Both of those questions then
+    retrieved the wrong horse's evidence, and were saved only by that evidence being
+    irrelevant enough for the graph to abstain.
+
+    The boundary is applied at the name's own edges, not at the text's: a name that
+    begins or ends in a Chinese character gets no boundary on that side, because
+    Chinese is written without delimiters and 火山 inside 火山最近狀態如何 is a real
+    mention. That distinction is why the rule lives in Python rather than in a regex
+    handed to Postgres — see `_is_mentioned`.
+
+    What it does not fix is a short name that genuinely is a word. A horse called LINK
+    still matches "the link between draw and result", and no boundary rule can tell
+    those apart. That is disambiguation, and it is T16's.
     """
     text = question.strip()
     if not text:
@@ -202,19 +220,21 @@ def find_horse(session: Session, question: str) -> HorseMatch | None:
         .where(asked.ilike(func.concat("%", HorseAlias.name, "%")))
     ).all()
 
-    # Postgres decided *whether* each row matches; this decides *which* name did, so
-    # that the longest match can win. It runs over the handful of rows already
-    # returned, not over the horses table.
-    lowered = text.lower()
+    # Postgres decided which rows *could* match; this decides which name actually did,
+    # so that the boundary rule is applied and the longest match can win. It runs over
+    # the handful of rows already returned, not over the horses table. The ILIKE above
+    # stays a superset filter on purpose: it can over-match and never under-match, so
+    # narrowing it in SQL would buy nothing and cost a regex escape per name.
     candidates = [
         HorseMatch(horse_id=horse_id, matched_name=name, name_en=name_en, name_zh=name_zh)
         for horse_id, name_en, name_zh in current
         for name in (name_en, name_zh)
-        if name and name.lower() in lowered
+        if name and _is_mentioned(text, name)
     ]
     candidates += [
         HorseMatch(horse_id=horse_id, matched_name=alias, name_en=name_en, name_zh=name_zh)
         for horse_id, name_en, name_zh, alias in former
+        if _is_mentioned(text, alias)
     ]
 
     if not candidates:
@@ -227,3 +247,24 @@ def find_horse(session: Session, question: str) -> HorseMatch | None:
     # An arbitrary-but-fixed tiebreak is not a disambiguation strategy; that is T16's
     # job. It is the difference between one wrong answer and an irreproducible one.
     return max(candidates, key=lambda match: (len(match.matched_name), match.horse_id))
+
+
+def _is_mentioned(text: str, name: str) -> bool:
+    """Whether `name` appears in `text` as a name rather than inside another word.
+
+    The boundary is asserted only against a side of the name that ends in an ASCII
+    letter or digit. A Chinese name gets none, so 火山 is found in 火山最近狀態如何;
+    an English one gets both, so ACE is not found in "Race". Python's `\\w` is Unicode
+    and would treat 最 as a word character, which is why the character class here is
+    written out rather than borrowed from `\\b`.
+    """
+    if not name:
+        return False
+    prefix = r"(?<![0-9A-Za-z])" if _is_delimited(name[0]) else ""
+    suffix = r"(?![0-9A-Za-z])" if _is_delimited(name[-1]) else ""
+    return re.search(prefix + re.escape(name) + suffix, text, re.IGNORECASE) is not None
+
+
+def _is_delimited(character: str) -> bool:
+    """Whether a script that separates its words is what this character belongs to."""
+    return character.isascii() and character.isalnum()

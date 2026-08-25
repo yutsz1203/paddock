@@ -38,6 +38,7 @@ from paddock.db.models import (
     EMBEDDING_DIM,
     Chunk,
     Horse,
+    HorseAlias,
     IncidentComment,
     Jockey,
     Meeting,
@@ -118,6 +119,9 @@ def _delete_test_data() -> None:
             session.query(Meeting).filter(Meeting.id.in_(meeting_ids)).delete(
                 synchronize_session=False
             )
+        session.query(HorseAlias).filter(HorseAlias.horse_id.like("HK_2099_%")).delete(
+            synchronize_session=False
+        )
         session.query(Horse).filter(Horse.horse_id.like("HK_2099_%")).delete(
             synchronize_session=False
         )
@@ -325,6 +329,92 @@ def test_two_names_of_equal_length_resolve_the_same_way_every_time() -> None:
     # The tiebreak is arbitrary but fixed, and named here so a change to it is visible.
     assert matches[0] is not None
     assert matches[0].horse_id == max(TARGET, OTHER)
+
+
+def _seed_short_names() -> None:
+    """Three horses whose names are short enough to hide inside ordinary words.
+
+    Not contrived: the corpus holds 39 horses with names of five characters or fewer,
+    among them ACE, EASON and LINK.
+    """
+    with session_scope() as session:
+        for horse_id, name_en, name_zh in (
+            ("HK_2099_Z001", "ACE", None),
+            ("HK_2099_Z002", "EASON", None),
+            ("HK_2099_Z003", "LINK", "火山"),
+        ):
+            session.add(
+                Horse(
+                    horse_id=horse_id, brand_no=horse_id[-4:], name_en=name_en, name_zh=name_zh
+                )
+            )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Which runners in Race 5 on 26 Apr 2026 had an excuse for a poor finish?",
+        "Who is the best jockey at Happy Valley this season?",
+        "Which horse got the best place in the last race?",
+        "What was the pace of that event?",
+    ],
+)
+def test_a_name_hiding_inside_a_longer_word_is_not_a_horse(question: str) -> None:
+    """ACE inside "Race", EASON inside "season". Found at Checkpoint B.
+
+    Both refusals in that run came down this path rather than through the limit the
+    plan records, and the wrong resolution is only harmless while the evidence it
+    fetches is irrelevant enough for the graph to abstain.
+    """
+    _seed_short_names()
+
+    with session_scope() as session:
+        assert find_horse(session, question) is None
+
+
+def test_a_short_name_standing_on_its_own_is_still_a_horse() -> None:
+    """The boundary rule must not cost a real match. ACE is a horse."""
+    _seed_short_names()
+
+    with session_scope() as session:
+        match = find_horse(session, "Did ACE have any trouble in running last time?")
+
+    assert match is not None
+    assert match.matched_name == "ACE"
+
+
+def test_a_name_against_punctuation_is_still_a_horse() -> None:
+    """Questions end in a question mark, and names get quoted and bracketed."""
+    _seed_short_names()
+
+    with session_scope() as session:
+        match = find_horse(session, "How did (ACE) go?")
+
+    assert match is not None
+    assert match.matched_name == "ACE"
+
+
+def test_a_chinese_name_needs_no_word_boundary() -> None:
+    """Chinese is written without delimiters, so the rule that fixes ACE must not be
+    applied to 火山. T17a populates these names; the matcher has to be ready for them."""
+    _seed_short_names()
+
+    with session_scope() as session:
+        match = find_horse(session, "火山最近狀態如何?")
+
+    assert match is not None
+    assert match.matched_name == "火山"
+
+
+def test_a_former_name_hiding_inside_a_word_is_not_a_horse() -> None:
+    """Renames go through a second query, and it needs the same rule (T6)."""
+    with session_scope() as session:
+        session.add(Horse(horse_id="HK_2099_Z004", brand_no="Z004", name_en="ZEBRA TEST"))
+        session.flush()
+        session.add(HorseAlias(horse_id="HK_2099_Z004", name="ACE", lang="en"))
+
+    with session_scope() as session:
+        assert find_horse(session, "What was the pace of that event?") is None
 
 
 # ── search_comments ─────────────────────────────────────────────────────────────
