@@ -33,7 +33,7 @@ from paddock.db.models import (
     Watermark,
 )
 from paddock.db.session import session_scope
-from paddock.ingest import pipeline
+from paddock.ingest import pipeline, translations
 from paddock.ingest.http import HkjcClient
 from paddock.ingest.pages import store_page
 from paddock.ingest.watermark import INCIDENT_REPORT
@@ -86,6 +86,12 @@ def _urls() -> list[str]:
                 urls.append(
                     client.url_for(
                         pipeline.SECTIONALS_PATH, pipeline.sectionals_params(day, race_no)
+                    )
+                )
+                urls.append(
+                    client.url_for(
+                        translations.CHINESE_RESULTS_PATH,
+                        pipeline.results_params(day, "ST", race_no),
                     )
                 )
         return urls
@@ -382,6 +388,69 @@ def test_a_backfill_that_lost_a_meeting_exits_non_zero(monkeypatch: pytest.Monke
         )
 
     result = runner.invoke(app, ["ingest", "season", "--season", "2025-26"])
+
+    assert result.exit_code == 1
+    assert "failed" in result.output
+
+
+# ── Chinese names ───────────────────────────────────────────────────────────────
+
+
+def _archive_chinese(day: dt.date) -> None:
+    """The Chinese results page for Race 1, so the real client has nothing to fetch."""
+    with HkjcClient() as client, session_scope() as session:
+        store_page(
+            session,
+            url=client.url_for(
+                translations.CHINESE_RESULTS_PATH, pipeline.results_params(day, "ST", 1)
+            ),
+            body=(FIXTURES / "results_20260426_ST_R1_zh.html").read_text(),
+        )
+
+
+def test_translations_name_the_meeting_and_report_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """About 1,800 requests and half an hour. It prints as it goes, and finishes with
+    the number that says whether a Chinese question can resolve its subject."""
+    _archive(RACE_DATE, "report_20260426_valid.html")
+    _serve_dates(monkeypatch, [RACE_DATE], "index")
+    runner.invoke(app, ["ingest", "season", "--season", "2025-26"])
+    _archive_chinese(RACE_DATE)
+
+    result = runner.invoke(app, ["ingest", "translations", "--season", "2025-26"])
+
+    assert result.exit_code == 0, result.output
+    assert "2026-04-26" in result.output
+    assert "14 runners" in result.output
+    assert "horses" in result.output, "the coverage line"
+
+
+def test_translations_reject_a_malformed_season_before_a_single_request() -> None:
+    result = runner.invoke(app, ["ingest", "translations", "--season", "2024-2025"])
+
+    assert result.exit_code != 0
+    assert "2025-26" in result.output
+
+
+def test_a_season_with_no_meetings_stored_says_so() -> None:
+    """Running this before the backfill is a mistake worth naming, not a silent
+    zero-meeting success."""
+    result = runner.invoke(app, ["ingest", "translations", "--season", "2019-20"])
+
+    assert result.exit_code == 1
+    assert "no meetings" in result.output.lower()
+
+
+def test_a_failed_meeting_exits_non_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing was corrupted — the meeting rolled back — but a season half named must
+    not end in a green exit code."""
+    _archive(RACE_DATE, "report_20260426_valid.html")
+    _serve_dates(monkeypatch, [RACE_DATE], "index")
+    runner.invoke(app, ["ingest", "season", "--season", "2025-26"])
+
+    # No Chinese page archived, and the base URL is unroutable, so the fetch fails.
+    result = runner.invoke(app, ["ingest", "translations", "--season", "2025-26"])
 
     assert result.exit_code == 1
     assert "failed" in result.output

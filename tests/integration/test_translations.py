@@ -30,7 +30,12 @@ from paddock.db.models import FetchedPage, Horse, IngestRun, Jockey, Meeting, Tr
 from paddock.db.session import session_scope
 from paddock.ingest import pipeline
 from paddock.ingest.pipeline import ingest_meeting
-from paddock.ingest.translations import CHINESE_RESULTS_PATH, translate_meeting
+from paddock.ingest.translations import (
+    CHINESE_RESULTS_PATH,
+    translate_meeting,
+    translate_season,
+    translation_coverage,
+)
 from paddock.ingest.watermark import INCIDENT_REPORT
 
 pytestmark = pytest.mark.integration
@@ -39,6 +44,7 @@ FIXTURES = pathlib.Path(__file__).parent.parent / "fixtures" / "html"
 
 RACE_DATE = dt.date(2026, 4, 26)
 RACECOURSE = "ST"
+SEASON = "2025-26"  # 2026-04-26 falls inside it
 RACES_IN_CARD = 11
 
 WINNER = "HK_2024_K570"
@@ -268,3 +274,50 @@ def test_a_chinese_page_for_another_race_is_refused() -> None:
     with session_scope() as session:
         horse = session.get(Horse, WINNER)
         assert horse is not None and horse.name_zh is None, "nothing was written"
+
+
+# ── The season walk ─────────────────────────────────────────────────────────────
+
+
+def test_the_season_walk_translates_every_stored_meeting() -> None:
+    _seed()
+
+    report = translate_season(_chinese_client(), SEASON)
+
+    assert [outcome.race_date for outcome in report.succeeded] == [RACE_DATE]
+    assert report.runners == 14
+    assert report.created == 0
+
+
+def test_a_season_with_nothing_stored_does_no_work() -> None:
+    """The corpus holds two seasons. Asking for a third must not be an error."""
+    report = translate_season(_chinese_client(), "2019-20")
+
+    assert report.outcomes == []
+
+
+def test_one_failed_meeting_does_not_end_the_walk() -> None:
+    """176 meetings over half an hour. One page HKJC will not serve must cost one
+    meeting, not the run — the same asymmetry `backfill` and `embed --all` use."""
+    _seed()
+    serves_nothing = RecordingFetcher()
+
+    report = translate_season(serves_nothing, SEASON)
+
+    assert [outcome.race_date for outcome in report.failed] == [RACE_DATE]
+    assert report.succeeded == []
+
+
+def test_coverage_counts_the_names_that_landed() -> None:
+    """What `ingest translations` prints at the end, and the only number that says
+    whether Q5 can resolve its subject."""
+    _seed()
+    translate_season(_chinese_client(), SEASON)
+
+    with session_scope() as session:
+        coverage = translation_coverage(session)
+
+    assert coverage.horses_named >= 14
+    assert coverage.jockeys_named >= 1
+    assert coverage.trainers_named >= 1
+    assert coverage.horses >= coverage.horses_named

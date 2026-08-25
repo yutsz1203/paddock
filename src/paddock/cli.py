@@ -52,6 +52,12 @@ from paddock.ingest.integrity import IntegrityReport, check_integrity, verify_se
 from paddock.ingest.pipeline import ingest_meeting
 from paddock.ingest.racing_calendar import published_meetings
 from paddock.ingest.results import ResultsParseError
+from paddock.ingest.translations import (
+    SeasonTranslation,
+    TranslationOutcome,
+    translate_season,
+    translation_coverage,
+)
 
 app = typer.Typer(
     name="paddock",
@@ -341,6 +347,99 @@ def _announce(outcome: Outcome) -> None:
             f"{outcome.ingest.comments} comments"
         )
     typer.secho(f"  {outcome.race_date}  {outcome.status:<9} {detail}", fg=colour)
+
+
+@ingest_app.command("translations")
+def ingest_translations_command(
+    season: str = SeasonOption,
+    refresh: bool = typer.Option(
+        False, "--refresh", help="Re-fetch the Chinese pages instead of reading the archive."
+    ),
+) -> None:
+    """Fill the Chinese name of every horse, jockey and trainer in a stored season.
+
+    T6 built the resolution and nothing ever fed it, so spec §1 Q5 — a question about
+    a horse by its Chinese name — could not resolve its own subject. This annotates
+    what the backfill already stored; it never adds a meeting.
+
+    About one request per race, and re-running is free: the Chinese pages are
+    archived like every other page.
+    """
+    with HkjcClient() as client:
+        report = translate_season(client, season, refresh=refresh, on_outcome=_announce_names)
+
+    if not report.outcomes:
+        typer.secho(
+            f"no meetings stored for {season} — run `paddock ingest season --season {season}`",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.echo(f"{report.meetings} meetings: {report.races} races, {report.runners} runners named")
+    _report_translation_coverage()
+    if not _translation_findings(report):
+        raise typer.Exit(1)
+
+
+def _announce_names(outcome: TranslationOutcome) -> None:
+    """One line per meeting. Half an hour of requests that prints nothing looks hung."""
+    if outcome.result is None:
+        typer.secho(
+            f"  {outcome.race_date} {outcome.racecourse}  failed: {outcome.error}",
+            fg=typer.colors.RED,
+        )
+        return
+    typer.secho(
+        f"  {outcome.race_date} {outcome.racecourse}  "
+        f"{outcome.result.races} races, {outcome.result.runners} runners",
+        fg=typer.colors.GREEN if outcome.result.runners else typer.colors.WHITE,
+    )
+
+
+def _report_translation_coverage() -> None:
+    """How much of the corpus now has a Chinese name. `horses` is what Q5 needs."""
+    with session_scope() as session:
+        coverage = translation_coverage(session)
+
+    typer.echo(
+        f"named: {coverage.horses_named}/{coverage.horses} horses, "
+        f"{coverage.jockeys_named}/{coverage.jockeys} jockeys, "
+        f"{coverage.trainers_named}/{coverage.trainers} trainers"
+    )
+
+
+def _translation_findings(report: SeasonTranslation) -> bool:
+    """Print everything worth a human's attention, and say whether the run was clean."""
+    if report.created:
+        # The one failure this pass is exposed to: a horse, jockey or trainer written
+        # beside the real one, holding one language of one name. Loud, not counted in
+        # passing — it means the join between the two pages broke.
+        typer.secho(
+            f"{report.created} horses, jockeys or trainers were CREATED by this pass — "
+            f"they should all have existed already",
+            fg=typer.colors.RED,
+            err=True,
+        )
+
+    for race_date, races in report.race_number_mismatches:
+        named = ", ".join(str(n) for n in races)
+        typer.secho(
+            f"{race_date}: the Chinese page named another race for races {named}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+
+    for race_date, races in report.races_without_chinese:
+        named = ", ".join(str(n) for n in races)
+        typer.secho(
+            f"{race_date}: no Chinese results page for races {named}", fg=typer.colors.YELLOW
+        )
+
+    for outcome in report.failed:
+        typer.secho(f"  {outcome.race_date} failed: {outcome.error}", fg=typer.colors.RED, err=True)
+
+    return not (report.failed or report.created or report.race_number_mismatches)
 
 
 @check_app.command("integrity")

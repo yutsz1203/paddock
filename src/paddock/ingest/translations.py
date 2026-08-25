@@ -43,14 +43,16 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from bs4 import BeautifulSoup, Tag
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from paddock.db.models import Horse, Jockey, Meeting, Race, Trainer
 from paddock.db.session import session_scope
+from paddock.ingest.dates import season_bounds
 from paddock.ingest.entities import resolve_horse, resolve_jockey, resolve_trainer
 from paddock.ingest.pages import PageFetcher, fetch_page
 from paddock.ingest.pipeline import RESULTS_PATH, record_run, results_params
@@ -340,3 +342,166 @@ def _entity_rows(session: Session) -> int:
         session.scalar(select(func.count()).select_from(model)) or 0
         for model in (Horse, Jockey, Trainer)
     )
+
+
+# ── The walk over a season ──────────────────────────────────────────────────────
+#
+# One meeting at a time, each in its own transaction, recording what happened and
+# stepping over what failed. The same disposition `backfill` needs for a season and
+# `embed_corpus` needs for the corpus: a run of 176 meetings over half an hour must
+# not lose 175 of them to one page HKJC will not serve.
+#
+# The catch is broad, as it is in `embed_corpus` and pointedly is not in `backfill`.
+# There the failure surface is HKJC's markup and it can be enumerated. Here it is the
+# markup *and* the network, over 1,800 requests, and it cannot. The report is loud
+# instead: every failure is named with its date, and the CLI exits non-zero.
+
+
+@dataclass(frozen=True)
+class TranslationOutcome:
+    race_date: dt.date
+    racecourse: str
+    result: MeetingTranslation | None = None
+    error: str | None = None
+    """Set when the meeting failed. Its transaction rolled back, so nothing of it
+    reached the corpus and a re-run starts it from the beginning."""
+
+
+@dataclass
+class SeasonTranslation:
+    outcomes: list[TranslationOutcome] = field(default_factory=list)
+
+    @property
+    def succeeded(self) -> list[TranslationOutcome]:
+        return [outcome for outcome in self.outcomes if outcome.error is None]
+
+    @property
+    def failed(self) -> list[TranslationOutcome]:
+        return [outcome for outcome in self.outcomes if outcome.error is not None]
+
+    def _sum(self, attribute: str) -> int:
+        return sum(
+            getattr(outcome.result, attribute) for outcome in self.succeeded if outcome.result
+        )
+
+    @property
+    def meetings(self) -> int:
+        return len(self.succeeded)
+
+    @property
+    def races(self) -> int:
+        return self._sum("races")
+
+    @property
+    def runners(self) -> int:
+        return self._sum("runners")
+
+    @property
+    def created(self) -> int:
+        """Entities this run created. Anything but zero means the join broke."""
+        return self._sum("created")
+
+    @property
+    def race_number_mismatches(self) -> list[tuple[dt.date, list[int]]]:
+        return [
+            (outcome.race_date, outcome.result.race_number_mismatches)
+            for outcome in self.succeeded
+            if outcome.result and outcome.result.race_number_mismatches
+        ]
+
+    @property
+    def races_without_chinese(self) -> list[tuple[dt.date, list[int]]]:
+        return [
+            (outcome.race_date, outcome.result.races_without_chinese)
+            for outcome in self.succeeded
+            if outcome.result and outcome.result.races_without_chinese
+        ]
+
+
+def translate_season(
+    client: PageFetcher,
+    season: str,
+    *,
+    refresh: bool = False,
+    on_outcome: Callable[[TranslationOutcome], None] | None = None,
+) -> SeasonTranslation:
+    """Fill `name_zh` for every meeting of `season` that is already in the corpus.
+
+    Args:
+        on_outcome: called with each meeting as it lands. The real run is about
+            1,800 requests and half an hour, and a report printed at the end of it
+            is indistinguishable from a hang.
+
+    Raises:
+        ValueError: `season` is not two consecutive years.
+    """
+    report = SeasonTranslation()
+
+    for race_date, racecourse in _stored_meetings(season):
+        outcome = _one_meeting(client, race_date, racecourse, refresh=refresh)
+        report.outcomes.append(outcome)
+        if on_outcome is not None:
+            on_outcome(outcome)
+
+    return report
+
+
+def _one_meeting(
+    client: PageFetcher, race_date: dt.date, racecourse: str, *, refresh: bool
+) -> TranslationOutcome:
+    try:
+        result = translate_meeting(client, race_date, racecourse, refresh=refresh)
+    except Exception as error:
+        return TranslationOutcome(race_date, racecourse, error=f"{type(error).__name__}: {error}")
+    return TranslationOutcome(race_date, racecourse, result=result)
+
+
+def _stored_meetings(season: str) -> list[tuple[dt.date, str]]:
+    """The season's meetings, oldest first, read from the corpus.
+
+    Driven by what was ingested rather than by a calendar: this pass annotates rows
+    that exist, so a meeting nobody has is not work it can do.
+    """
+    start, end = season_bounds(season)
+    with session_scope() as session:
+        rows = session.execute(
+            select(Meeting.race_date, Meeting.racecourse)
+            .where(Meeting.race_date >= start, Meeting.race_date <= end)
+            .order_by(Meeting.race_date)
+        ).all()
+    return [(race_date, racecourse) for race_date, racecourse in rows]
+
+
+# ── Coverage ────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class TranslationCoverage:
+    """How much of the corpus has a Chinese name. Spec §1 Q5 needs `horses_named`."""
+
+    horses: int
+    horses_named: int
+    jockeys: int
+    jockeys_named: int
+    trainers: int
+    trainers_named: int
+
+
+def translation_coverage(session: Session) -> TranslationCoverage:
+    """Count the Chinese names in the three tables, against their totals."""
+    horses = select(func.count()).select_from(Horse)
+    jockeys = select(func.count()).select_from(Jockey)
+    trainers = select(func.count()).select_from(Trainer)
+
+    return TranslationCoverage(
+        horses=_count(session, horses),
+        horses_named=_count(session, horses.where(Horse.name_zh.is_not(None))),
+        jockeys=_count(session, jockeys),
+        jockeys_named=_count(session, jockeys.where(Jockey.name_zh.is_not(None))),
+        trainers=_count(session, trainers),
+        trainers_named=_count(session, trainers.where(Trainer.name_zh.is_not(None))),
+    )
+
+
+def _count(session: Session, statement: Select[tuple[int]]) -> int:
+    return session.scalar(statement) or 0
