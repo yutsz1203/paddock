@@ -24,3 +24,11 @@ def test_secrets_are_not_exposed_by_repr() -> None:
     assert "sk-should-not-appear" not in repr(settings)
     assert settings.deepseek_api_key is not None
     assert settings.deepseek_api_key.get_secret_value() == "sk-should-not-appear"
+
+
+def test_the_ui_points_at_a_local_api_by_default() -> None:
+    """The demo and the API are two processes. A default that is not local would
+    make a fresh clone talk to somewhere else, or to nowhere."""
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.ui_api_base_url == "http://127.0.0.1:8000"

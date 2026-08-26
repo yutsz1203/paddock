@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     api_rate_limit_per_minute: int = 10
     api_daily_llm_call_cap: int = 500
 
+    # ── UI ──────────────────────────────────────────────────────────────────────
+    # Where the Streamlit demo looks for the API. The two are separate processes
+    # even in the container (spec §5), so this is a URL and not an import.
+    ui_api_base_url: str = "http://127.0.0.1:8000"
+
     # ── Alerting (reuses the existing Telegram bot) ─────────────────────────────
     telegram_api_token: SecretStr | None = None
     telegram_chat_id: str | None = None
