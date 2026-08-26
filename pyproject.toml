@@ -94,8 +94,12 @@ markers = [
     "integration: requires a running Postgres (deselect with '-m \"not integration\"')",
     "live: hits racing.hkjc.com — never runs in CI",
     "model: loads bge-m3 (~2.2 GB download) — run locally with '-m model'",
+    "ui: drives the Streamlit demo — needs the `ui` extra ('-m ui')",
 ]
 # `model` is excluded by default for the same reason as `live`: it needs a 2.2 GB
 # download from Hugging Face, which would make every CI run depend on a third party
 # being up. Run it locally after touching anything in `paddock.embed`.
-addopts = "-m 'not live and not model'"
+# `ui` joins them for a different reason: streamlit is an optional extra, and the
+# rest of the suite runs on a bare `uv sync`. CI installs every extra and runs it in
+# a step of its own; locally, `make test-ui`.
+addopts = "-m 'not live and not model and not ui'"

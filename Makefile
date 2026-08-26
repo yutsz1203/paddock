@@ -1,4 +1,4 @@
-.PHONY: help install up down db lint typecheck test test-unit test-model check
+.PHONY: help install up down db lint typecheck test test-unit test-model test-ui ui check
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -22,7 +22,7 @@ lint:  ## Lint and format
 	uv run ruff format .
 
 typecheck:  ## Type check
-	uv run mypy src/
+	uv run mypy src/ app/
 
 test-unit:  ## Unit tests only (no database)
 	uv run pytest -m "not integration"
@@ -38,5 +38,15 @@ test:  ## All tests (requires Postgres; uses its own _test database)
 test-model:  ## Embedding tests against the real bge-m3 (~2.2 GB download)
 	uv sync --extra embed
 	uv run pytest -m model
+
+# Also deselected by default, but for a different reason than `model`: streamlit is
+# an optional extra and the rest of the suite runs on a bare `uv sync`. CI installs
+# every extra and runs this in a step of its own.
+test-ui:  ## Streamlit demo tests (needs the `ui` extra)
+	uv sync --extra ui
+	uv run pytest -m ui
+
+ui:  ## Run the Streamlit demo (needs `paddock serve` on :8000)
+	uv run streamlit run app/streamlit_app.py
 
 check: lint typecheck test  ## Everything
