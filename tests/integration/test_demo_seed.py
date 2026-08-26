@@ -24,7 +24,9 @@ from collections.abc import Iterator
 
 import pytest
 from sqlalchemy import func, select
+from typer.testing import CliRunner
 
+from paddock.cli import app
 from paddock.db.models import (
     EMBEDDING_DIM,
     Chunk,
@@ -46,6 +48,8 @@ pytestmark = pytest.mark.integration
 
 # Well outside HKJC's real data, so a failed run cannot touch an ingested meeting.
 FIRST = dt.date(2098, 9, 6)
+
+runner = CliRunner()
 
 
 def _day(offset: int) -> dt.date:
@@ -274,3 +278,49 @@ def test_the_report_counts_what_is_there_without_changing_it() -> None:
     assert report.first_date == _day(0)
     assert report.last_date == _day(2)
     assert _count(Meeting) == 3
+
+
+# ── The command line over it ────────────────────────────────────────────────────
+#
+# Thin, like every other command: what these own is the guard. `demo prune` deletes
+# most of a database and cannot be undone, so the one thing worth testing here is
+# that it refuses to do that until it is told to in words.
+
+
+def test_prune_refuses_without_yes_and_deletes_nothing() -> None:
+    _seed_season(3)
+
+    result = runner.invoke(app, ["demo", "prune", "--meetings", "1"])
+
+    assert result.exit_code == 1
+    assert "--yes" in result.output
+    assert _count(Meeting) == 3
+
+
+def test_prune_reports_the_slice_it_left_behind() -> None:
+    _seed_season(3)
+
+    result = runner.invoke(app, ["demo", "prune", "--meetings", "2", "--yes"])
+
+    assert result.exit_code == 0
+    assert "2 meetings" in result.output
+    assert _day(1).isoformat() in result.output
+    assert _day(2).isoformat() in result.output
+    assert _count(Meeting) == 2
+
+
+def test_report_states_what_a_database_holds_and_changes_nothing() -> None:
+    _seed_season(3)
+
+    result = runner.invoke(app, ["demo", "report"])
+
+    assert result.exit_code == 0
+    assert "3 meetings" in result.output
+    assert _count(Meeting) == 3
+
+
+def test_report_on_an_empty_database_says_so_rather_than_printing_a_range() -> None:
+    result = runner.invoke(app, ["demo", "report"])
+
+    assert result.exit_code == 1
+    assert "no meetings" in result.output

@@ -35,6 +35,12 @@ from sqlalchemy import select
 
 from paddock.db.models import Meeting
 from paddock.db.session import session_scope
+from paddock.demo.seed import (
+    DEFAULT_MEETINGS,
+    SeedReport,
+    prune_to_recent_meetings,
+    seed_report,
+)
 from paddock.embed.corpus import (
     MeetingOutcome,
     benchmark_search,
@@ -68,6 +74,8 @@ ingest_app = typer.Typer(help="Fetch and store racing data.", no_args_is_help=Tr
 app.add_typer(ingest_app, name="ingest")
 check_app = typer.Typer(help="Audit what was ingested.", no_args_is_help=True)
 app.add_typer(check_app, name="check")
+demo_app = typer.Typer(help="Build and inspect the committed demo dataset.", no_args_is_help=True)
+app.add_typer(demo_app, name="demo")
 
 
 class Racecourse(StrEnum):
@@ -578,3 +586,78 @@ def serve_command(
     import uvicorn
 
     uvicorn.run("paddock.api.main:app", host=host, port=port, reload=reload)
+
+
+# ── The demo dataset ────────────────────────────────────────────────────────────
+
+
+MeetingsOption = typer.Option(
+    DEFAULT_MEETINGS, "--meetings", help="How many of the most recent meetings to keep."
+)
+YesOption = typer.Option(
+    False, "--yes", help="Confirm the deletion. Required, because nothing undoes it."
+)
+
+
+@demo_app.command("prune")
+def demo_prune_command(
+    meetings: int = MeetingsOption,
+    yes: bool = YesOption,
+) -> None:
+    """Cut this database down to the most recent meetings, for `data/seed/`.
+
+    Destructive and irreversible. Point it at a copy of the corpus, never at the
+    corpus — `make seed` makes that copy for you.
+    """
+    if not yes:
+        # A flag rather than a prompt: `make seed` is not interactive, and a prompt
+        # that a script answers for you is a confirmation nobody gave.
+        typer.secho(
+            "demo prune deletes every meeting outside the slice, and the page archive "
+            "with them. Nothing undoes it. Re-run with --yes, against a copy.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    with session_scope() as session:
+        report = prune_to_recent_meetings(session, meetings=meetings)
+
+    _report_seed(report)
+
+
+@demo_app.command("report")
+def demo_report_command() -> None:
+    """State what this database holds. Reads only.
+
+    `make demo` runs this after restoring, because a dump is an opaque binary and
+    the operator deserves to be told what came out of it.
+    """
+    with session_scope() as session:
+        report = seed_report(session)
+
+    if not report.meetings:
+        typer.secho(
+            "no meetings — restore data/seed/paddock_demo.dump, or run an ingest",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    _report_seed(report)
+
+
+def _report_seed(report: SeedReport) -> None:
+    """One block, in the order a reader asks: how much, over what, and of what."""
+    first = report.first_date.isoformat() if report.first_date else "-"
+    last = report.last_date.isoformat() if report.last_date else "-"
+    typer.echo(f"{report.meetings} meetings, {first} to {last}")
+    typer.echo(
+        f"  {report.races} races, {report.runners} runners, {report.comments} comments, "
+        f"{report.chunks} chunks"
+    )
+    typer.echo(f"  {report.horses} horses, {report.jockeys} jockeys, {report.trainers} trainers")
+    if report.pages:
+        # Not an error here — the corpus is meant to have them. It is only the
+        # committed slice that must not, and `make seed` is what checks that.
+        typer.echo(f"  {report.pages} archived pages")
