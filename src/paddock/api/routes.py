@@ -1,4 +1,4 @@
-"""`/ask` and `/health`.
+"""`/ask`, `/coverage` and `/health`.
 
 ## The stream carries a verified answer, not a live one
 
@@ -32,7 +32,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from paddock.agent.graph import answer_question
-from paddock.api.schemas import AskRequest, SourceOut
+from paddock.api.schemas import AskRequest, CoverageOut, SourceOut
+from paddock.db.coverage import corpus_coverage
 from paddock.db.session import session_scope
 from paddock.embed.embedder import Embedder, get_embedder
 from paddock.llm.provider import LLM
@@ -70,6 +71,18 @@ def health() -> dict[str, str]:
     by itself.
     """
     return {"status": "ok"}
+
+
+@router.get("/coverage")
+def coverage() -> CoverageOut:
+    """What the corpus holds, so a client can say so before anyone asks a question.
+
+    Reads the database, unlike `/health`. That is the point: a visitor cannot judge
+    a refusal without knowing the range it was refused against, and a range that is
+    a constant somewhere in the UI stops being true the week the live pipeline runs.
+    """
+    with session_scope() as session:
+        return CoverageOut(**vars(corpus_coverage(session)))
 
 
 @router.post("/ask")

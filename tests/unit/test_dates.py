@@ -14,6 +14,7 @@ from paddock.ingest.dates import (
     parse_date_list,
     report_url_params,
     season_bounds,
+    season_of,
 )
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "html"
@@ -109,3 +110,36 @@ class _IndexOnly:
     def get_text(self, path: str, params: object = None) -> str:
         assert path == DATE_LIST_PATH, f"unexpected request for {path}"
         return self.payload
+
+
+# ── Which season a date belongs to ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("day", "season"),
+    [
+        (dt.date(2025, 9, 1), "2025-26"),
+        (dt.date(2025, 9, 7), "2025-26"),
+        (dt.date(2026, 7, 15), "2025-26"),
+        (dt.date(2026, 8, 31), "2025-26"),
+        (dt.date(2024, 12, 26), "2024-25"),
+        (dt.date(2025, 8, 31), "2024-25"),
+    ],
+)
+def test_a_date_names_the_season_it_falls_in(day: dt.date, season: str) -> None:
+    assert season_of(day) == season
+
+
+def test_the_season_of_a_bound_is_the_season_that_bound_came_from() -> None:
+    """`season_of` is the inverse of `season_bounds`, so the September cut lives in
+    one place. A drift between them would misfile every meeting in one month."""
+    for season in ("2024-25", "2025-26", "2099-00"):
+        start, end = season_bounds(season)
+        assert season_of(start) == season
+        assert season_of(end) == season
+
+
+def test_a_season_crossing_the_century_still_reads_as_two_years() -> None:
+    """2099-00, not 2099-0. The label is built from a modulo and a naive format
+    string drops the leading zero."""
+    assert season_of(dt.date(2099, 9, 1)) == "2099-00"

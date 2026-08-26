@@ -8,6 +8,8 @@ one is either an accident or an attempt to spend someone else's tokens.
 
 from __future__ import annotations
 
+import datetime as dt
+
 from pydantic import BaseModel, Field, field_validator
 
 MAX_QUESTION_CHARS = 500
@@ -34,3 +36,12 @@ class SourceOut(BaseModel):
     kind: str
     text: str
     reference: str
+
+
+class CoverageOut(BaseModel):
+    """What the demo holds, as its banner states it."""
+
+    meetings: int
+    first_date: dt.date | None
+    last_date: dt.date | None
+    seasons: list[str]

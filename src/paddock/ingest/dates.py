@@ -127,3 +127,14 @@ def dates_for_season(client: DateListFetcher, season: str) -> tuple[list[dt.date
     if indexed:
         return indexed, "index"
     return list(candidate_dates(start, end)), "candidates"
+
+
+def season_of(day: dt.date) -> str:
+    """The season a date falls in — the inverse of `season_bounds`.
+
+    The September-to-August cut is stated once, here and in `season_bounds`, because
+    a date filed under the wrong season is not visibly wrong: it reads as a real
+    meeting in a real season and only the count is off.
+    """
+    start_year = day.year if day.month >= 9 else day.year - 1
+    return f"{start_year}-{(start_year + 1) % 100:02d}"

@@ -344,9 +344,7 @@ def _seed_short_names() -> None:
             ("HK_2099_Z003", "LINK", "火山"),
         ):
             session.add(
-                Horse(
-                    horse_id=horse_id, brand_no=horse_id[-4:], name_en=name_en, name_zh=name_zh
-                )
+                Horse(horse_id=horse_id, brand_no=horse_id[-4:], name_en=name_en, name_zh=name_zh)
             )
 
 

@@ -291,10 +291,7 @@ def test_a_prefixed_brand_number_is_reduced_to_the_canonical_brand() -> None:
     report = parse_meeting_report(load("report_20241109_prefixed_brand.html"), dt.date(2024, 11, 9))
 
     runner = next(
-        run
-        for race in report.races
-        for run in race.runners
-        if run.horse_name == "BEAR CHAMP"
+        run for race in report.races for run in race.runners if run.horse_name == "BEAR CHAMP"
     )
 
     assert runner.brand_no == "J313"

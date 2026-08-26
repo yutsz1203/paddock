@@ -73,7 +73,7 @@ def test_brand_numbers_are_extracted(sectionals) -> None:  # type: ignore[no-unt
 
 
 def test_a_prefixed_brand_number_still_reads_as_a_runner_row() -> None:
-    """"BEAR CHAMP&nbsp;(AJ313)" carries a leading letter that its own link omits.
+    """ "BEAR CHAMP&nbsp;(AJ313)" carries a leading letter that its own link omits.
 
     The row filter used to require exactly one letter before the digits, so this
     runner was not recognised as a runner row at all — the page parsed, the race
