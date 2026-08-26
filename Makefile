@@ -1,4 +1,4 @@
-.PHONY: help install up down db lint typecheck test test-unit test-model test-ui ui check
+.PHONY: help install up down db lint typecheck test test-unit test-model test-ui ui seed demo check
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -48,5 +48,15 @@ test-ui:  ## Streamlit demo tests (needs the `ui` extra)
 
 ui:  ## Run the Streamlit demo (needs `paddock serve` on :8000)
 	uv run streamlit run app/streamlit_app.py
+
+# Cuts data/seed/paddock_demo.dump from a throwaway clone of the corpus. The corpus
+# itself is never written to. Only needed after a backfill widens what should ship.
+seed:  ## Rebuild the committed demo dataset from the local corpus
+	./scripts/seed.sh
+
+# Restores data/seed/ into a database of its own and starts the API and the demo.
+# No HKJC request is made. The corpus database is not touched.
+demo:  ## Run the demo from the committed dataset
+	./scripts/demo.sh
 
 check: lint typecheck test  ## Everything
