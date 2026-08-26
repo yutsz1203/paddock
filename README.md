@@ -10,3 +10,20 @@ returned without a citation — if retrieval finds no evidence, the agent abstai
 rather than guessing.
 
 **Status:** work in progress. 
+
+## Run the demo
+
+The API and the demo are two processes. Start the API first.
+
+```bash
+make up                # Postgres
+uv run paddock serve   # API  :8000
+make ui                # Streamlit demo  :8501
+```
+
+The demo needs the `ui` extra. `make ui` installs nothing, so run
+`uv sync --extra ui` once before the first start.
+
+The demo states its data range and its scope on the first screen. It answers
+questions about one horse at a time. It refuses a question about a jockey or about
+a whole race, because the router reads keywords only. See ADR-004.

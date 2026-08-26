@@ -145,3 +145,14 @@ def test_an_unknown_kind_shows_as_itself() -> None:
     """T15 adds tools, and each one names its rows. An unlabelled kind must still
     identify the card rather than leave it headed by nothing."""
     assert source_kind_name("en", "jockey_stat") == "jockey_stat"  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("language", ["en", "zh"])
+def test_the_scope_says_that_each_question_stands_alone(language: str) -> None:
+    """The graph is handed one question and no history (`agent.graph`). A visitor
+    who asks "and the run before?" gets a refusal, and without this sentence that
+    reads as the system failing rather than as a limit it declared."""
+    body = strings(language).scope_body  # type: ignore[arg-type]
+
+    assert ("on its own" in body) or ("獨立作答" in body)
+    assert ("no memory" in body) or ("不會記住" in body)
