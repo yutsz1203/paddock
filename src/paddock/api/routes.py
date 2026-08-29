@@ -12,13 +12,16 @@ properties is to enforce sentence by sentence and release each one as it passes,
 which is worth doing when there is an eval to show it does not change groundedness
 (T16). Until then the guarantee wins over the latency.
 
-## Two guards stand in front of the model, and both answer differently
+## Two guards stand in front of the model, and they answer differently
 
 `enforce_rate_limit` runs before the handler, so it refuses with 429 and a
-`Retry-After`. Anything that fails once the stream has started cannot use a status
-code — the 200 went out with the first byte — so it becomes an `error` event
-instead. Which mechanism a guard uses is decided by where it can run, not by how
+`Retry-After`. The daily cap cannot: it can be spent part-way through a question,
+and by then the 200 has gone out with the first byte. So it becomes an `error`
+event. Which mechanism a guard uses is decided by where it can run, not by how
 serious it is.
+
+The two are not redundant. The limiter paces one caller so nobody starves the rest;
+the cap bounds total spend however many callers there are.
 
 ## Event protocol
 
@@ -40,6 +43,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from paddock.agent.graph import answer_question
+from paddock.api.budget import CappedLLM, DailyCallBudget, DailyCapReachedError
 from paddock.api.ratelimit import RateLimiter, client_key
 from paddock.api.schemas import AskRequest, CoverageOut, SourceOut
 from paddock.db.coverage import corpus_coverage
@@ -69,6 +73,14 @@ def get_llm_dependency(request: Request) -> LLM | None:
 
 def get_embedder_dependency(request: Request) -> Embedder:
     return getattr(request.app.state, "embedder", None) or get_embedder()
+
+
+def get_budget_dependency(request: Request) -> DailyCallBudget | None:
+    """The daily call budget built at startup, or None if there is none.
+
+    A cheap attribute read, for the same reason as `get_llm_dependency`.
+    """
+    return getattr(request.app.state, "budget", None)
 
 
 def enforce_rate_limit(request: Request) -> None:
@@ -132,25 +144,50 @@ def ask(
     body: AskRequest,
     llm: Annotated[LLM | None, Depends(get_llm_dependency)],
     embedder: Annotated[Embedder, Depends(get_embedder_dependency)],
+    budget: Annotated[DailyCallBudget | None, Depends(get_budget_dependency)],
 ) -> StreamingResponse:
     """Answer a question, streaming the verified answer over SSE."""
     return StreamingResponse(
-        _stream(body.question, llm, embedder),
+        _stream(body.question, llm, embedder, budget),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-def _stream(question: str, llm: LLM | None, embedder: Embedder) -> Iterator[str]:
+def _stream(
+    question: str,
+    llm: LLM | None,
+    embedder: Embedder,
+    budget: DailyCallBudget | None,
+) -> Iterator[str]:
     if llm is None:
         # Startup already logged why. Reported as an event rather than a status code
         # because the 200 went out with the response headers.
+        #
+        # Checked before the cap: when both are wrong, the one an operator can fix
+        # by setting a variable is the one worth naming.
         yield _event("error", {"message": "llm_not_configured"})
         return
+
+    if budget is not None:
+        if budget.exhausted:
+            # Asked before a session is opened or the query encoder is touched. A
+            # demo that has run out of budget should not still be doing the work.
+            log.info("daily_cap_reached", calls_today=budget.calls_today, cap=budget.cap)
+            yield _event("error", {"message": "daily_cap_reached"})
+            return
+        llm = CappedLLM(llm, budget)
 
     try:
         with session_scope() as session:
             answer = answer_question(session, question=question, llm=llm, embedder=embedder)
+    except DailyCapReachedError:
+        # The cap was spent part-way through this question — the graph retries
+        # synthesis once, so one question can be the call that exhausts it. Same
+        # event as the pre-flight check, so a client needs one branch, not two.
+        log.info("daily_cap_reached", calls_today=budget.calls_today if budget else 0)
+        yield _event("error", {"message": "daily_cap_reached"})
+        return
     except Exception as error:
         log.exception("ask_failed", question=question)
         yield _event("error", {"message": type(error).__name__})

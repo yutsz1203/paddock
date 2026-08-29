@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
+from paddock.api.budget import DailyCallBudget
 from paddock.api.ratelimit import RateLimiter
 from paddock.api.routes import get_embedder_dependency, get_llm_dependency, router
 from paddock.config import get_settings
@@ -45,14 +46,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Cheap — the 2.2 GB model is not read until the first embed call.
     app.state.embedder = get_embedder()
 
-    # Built here rather than per request so the counts survive between requests,
-    # which is the only way a window means anything.
+    # Both guards are built here rather than per request, so their counts survive
+    # between requests — which is the only way a window or a daily total means
+    # anything. Neither is persisted; see `paddock.api.budget` for what that costs
+    # and which cap closes the hole.
     app.state.rate_limiter = RateLimiter(limit=settings.api_rate_limit_per_minute)
     app.state.trusted_proxy_hops = settings.api_trusted_proxy_hops
+    app.state.budget = DailyCallBudget(cap=settings.api_daily_llm_call_cap)
     log.info(
         "limits_ready",
         rate_limit_per_minute=settings.api_rate_limit_per_minute,
         trusted_proxy_hops=settings.api_trusted_proxy_hops,
+        daily_llm_call_cap=settings.api_daily_llm_call_cap,
     )
 
     yield

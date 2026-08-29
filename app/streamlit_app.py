@@ -157,11 +157,14 @@ def ask(table_language: Language, question: str) -> None:
             return
 
         if failure is not None:
-            message = (
-                table.error_llm
-                if failure == "llm_not_configured"
-                else table.error_generic.format(name=failure)
-            )
+            # Two failures are expected rather than exceptional — no key, and a
+            # spent daily budget — so each gets a sentence that says what to do.
+            # Everything else falls through to the generic line with its name in it.
+            named = {
+                "llm_not_configured": table.error_llm,
+                "daily_cap_reached": table.error_cap,
+            }
+            message = named.get(failure, table.error_generic.format(name=failure))
             st.error(message)
             turns.append({"role": "assistant", "text": message})
             return

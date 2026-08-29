@@ -26,6 +26,7 @@ from sqlalchemy import select
 from tests.doubles import ScriptedLLM
 
 from paddock.agent.citations import NO_EVIDENCE
+from paddock.api.budget import DailyCallBudget
 from paddock.api.main import app, get_embedder_dependency, get_llm_dependency
 from paddock.db.models import EMBEDDING_DIM, Chunk, Horse, IncidentComment, Meeting, Race, Runner
 from paddock.db.session import session_scope
@@ -231,3 +232,41 @@ def test_an_unconfigured_provider_is_an_event_not_a_crash() -> None:
 
     events = _events(response.text)
     assert events == [("error", {"message": "llm_not_configured"})]
+
+
+def test_the_cap_can_be_spent_part_way_through_a_question() -> None:
+    """The graph retries synthesis when the citation check rejects the first answer,
+    so the call that exhausts the budget can be the second one inside a question
+    already streaming. It reports the same event as a cap that was spent before the
+    question arrived, so a client needs one branch and not two."""
+    _seed_and_override("An uncited claim.", CITED)
+    with TestClient(app) as client:
+        # Set inside the context: startup builds the real one from settings.
+        app.state.budget = DailyCallBudget(cap=1)
+        response = client.post("/ask", json={"question": f"Did {NAME_EN} have trouble?"})
+
+    assert response.status_code == 200
+    assert [kind for kind, _ in _events(response.text)] == ["error"]
+    assert _events(response.text)[0][1]["message"] == "daily_cap_reached"
+
+
+def test_an_answer_within_the_cap_is_charged_once_per_model_call() -> None:
+    _seed_and_override(CITED)
+    budget = DailyCallBudget(cap=10)
+    with TestClient(app) as client:
+        app.state.budget = budget
+        client.post("/ask", json={"question": f"Did {NAME_EN} have trouble?"})
+
+    assert budget.calls_today == 1
+
+
+def test_a_refusal_costs_no_budget() -> None:
+    """Abstention happens before synthesis. Charging for it would let a scraper
+    asking about horses that do not exist burn the day's budget."""
+    _seed_and_override(CITED)
+    budget = DailyCallBudget(cap=10)
+    with TestClient(app) as client:
+        app.state.budget = budget
+        client.post("/ask", json={"question": "Did NOTAREALHORSE have trouble?"})
+
+    assert budget.calls_today == 0

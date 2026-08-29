@@ -79,6 +79,7 @@ class Strings:
 
     abstained_note: str
     error_llm: str
+    error_cap: str
     error_generic: str
     """Template. `{name}`."""
 
@@ -120,6 +121,10 @@ _EN = Strings(
         "That is the intended behaviour, not a failure."
     ),
     error_llm="No language model is configured. Set an API key and restart the API.",
+    error_cap=(
+        "This demo has used its model budget for today. It resets at midnight UTC. "
+        "The source cards and the data range still work; only new answers do not."
+    ),
     error_generic="The request failed: {name}.",
     examples_title="Try one of these",
     examples=(
@@ -158,6 +163,10 @@ _ZH = Strings(
     route_both="SQL 查詢加語意檢索",
     abstained_note="系統找不到可引用的證據，因此拒絕作答。這是預期行為，不是失敗。",
     error_llm="未設定語言模型。請設定 API 金鑰後重新啟動 API。",
+    error_cap=(
+        "本示範今日的模型用量已用完，將於世界協調時間午夜重設。"
+        "出處卡片與資料範圍仍可查看，只是無法產生新的回答。"
+    ),
     error_generic="請求失敗：{name}。",
     examples_title="試試這些問題",
     examples=(

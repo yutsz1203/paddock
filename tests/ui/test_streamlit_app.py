@@ -68,6 +68,7 @@ REFUSAL = (
 )
 
 NO_MODEL = 'event: error\ndata: {"message": "llm_not_configured"}\n\n'
+CAP_SPENT = 'event: error\ndata: {"message": "daily_cap_reached"}\n\n'
 
 
 def _app(*, answer: str = ANSWER, coverage: dict[str, object] | None = None) -> AppTest:
@@ -216,3 +217,14 @@ def test_an_api_that_is_not_running_is_a_message_not_a_traceback() -> None:
 
     assert not at.exception
     assert any("http://api.test" in element.value for element in at.error)
+
+
+def test_a_spent_budget_says_so_and_says_when_it_returns() -> None:
+    """The public demo has a daily cap. "The request failed: daily_cap_reached."
+    reads as a bug; a sentence naming the reset does not."""
+    at = _app(answer=CAP_SPENT).run()
+
+    at.chat_input[0].set_value("Did SETANTA have trouble?").run()
+
+    assert not at.exception
+    assert strings("en").error_cap in _page_text(at)
