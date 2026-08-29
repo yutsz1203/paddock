@@ -150,7 +150,23 @@ migration step is needed. Start the two services again:
 ssh paddock 'cd ~/paddock && docker compose start api ui'
 ```
 
-## Step 6 — Check it from outside
+## Step 6 — Warm the model before anyone visits
+
+bge-m3 is 2.2 GB and is fetched on the first question, not at startup. On two cores
+that first question takes minutes, and the acceptance criterion is 20 seconds. Ask
+one question yourself, from the box, so the visitor is never the one paying:
+
+```bash
+ssh paddock 'curl -sS -m 900 -X POST http://127.0.0.1:8000/ask \
+  -H "Content-Type: application/json" \
+  -d "{\"question\":\"Did SETANTA have any trouble in running last time?\"}" | tail -3'
+```
+
+The model lands in the `models` volume and stays there. A container restart reloads
+it from disk rather than from Hugging Face, so this step is needed once per
+deployment, not once per restart.
+
+## Step 7 — Check it from outside
 
 Do this from a phone on mobile data, not from the machine you deployed from. A
 laptop on the same network can succeed for reasons a visitor does not have.
