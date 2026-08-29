@@ -156,3 +156,23 @@ def test_the_scope_says_that_each_question_stands_alone(language: str) -> None:
 
     assert ("on its own" in body) or ("獨立作答" in body)
     assert ("no memory" in body) or ("不會記住" in body)
+
+
+@pytest.mark.parametrize("language", ["en", "zh"])
+def test_the_scope_says_last_time_is_answered_by_meaning_not_recency(language: str) -> None:
+    """Checkpoint B, Finding 1, made this a condition on the demo: "the demo must
+    state that 'last time' questions are answered from the nearest comments, not the
+    newest, until T15 lands."
+
+    It matters more here than in the document. Retrieval ranks by meaning, so a
+    question about "last time" can be answered from an older run, and a report the
+    search did not reach reads to the model as a race with no report — which it then
+    states as "ran without incident", with a marker on it, so citation enforcement
+    passes. The demo ships "Did SETANTA have any trouble in running last time?" as
+    one of its three example questions, which makes this the most likely first
+    experience a visitor has.
+    """
+    body = strings(language).scope_body  # type: ignore[arg-type]
+
+    assert ("last time" in body) or ("上仗" in body)
+    assert ("closest in meaning" in body) or ("意思最接近" in body)

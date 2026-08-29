@@ -105,7 +105,12 @@ _EN = Strings(
         'this season?". That is a stated limit (ADR-004), not a broken feature. '
         "The queries that answer it are built next.\n\n"
         "Each question is answered on its own. The system keeps no memory of the "
-        "question before it. A follow-up must name the horse again."
+        "question before it. A follow-up must name the horse again.\n\n"
+        'A question about "last time" is answered from the comments closest in '
+        "meaning to it, not from the most recent race. So an answer can describe an "
+        "older run, and it can say a race passed without incident when a report "
+        "exists that the search did not reach. Read the source cards, not only the "
+        "sentence. Retrieval ordered by date is built next."
     ),
     input_placeholder="Ask about a horse — by name, in English or Chinese.",
     thinking="Reading the evidence…",
@@ -150,7 +155,10 @@ _ZH = Strings(
         "關於騎師或整場賽事的問題會被拒絕，而不是作答，"
         "例如「今季跑馬地最佳騎師是誰？」。"
         "這是已列明的限制（ADR-004），不是故障。相關查詢會在下一階段加入。\n\n"
-        "每個問題都會獨立作答。系統不會記住上一個問題。追問時必須再次寫出馬名。"
+        "每個問題都會獨立作答。系統不會記住上一個問題。追問時必須再次寫出馬名。\n\n"
+        "問「上仗」時，系統取的是意思最接近的評語，而不是日期最近的一場。"
+        "因此答案可能講的是較早的一仗；報告存在但檢索不到時，答案也可能說該仗沒有事故。"
+        "請一併查看出處卡片，不要只看結論。按日期排序的檢索會在下一階段建立。"
     ),
     input_placeholder="輸入馬名提問，中英文皆可。",
     thinking="正在翻查證據…",
