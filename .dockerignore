@@ -1,0 +1,26 @@
+# The build needs pyproject.toml, uv.lock, src/, app/, migrations/ and alembic.ini.
+# Everything else is either large, secret, or would bust the layer cache on a file
+# the image never reads.
+
+.git/
+.github/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.ua/
+__pycache__/
+*.py[cod]
+
+# Secrets. The instance has its own .env, mounted at run time by `env_file`.
+.env
+
+# 22 MB the deployed box does not use: it restores a full pg_dump of the corpus,
+# not the committed demo slice. See data/seed/README.md.
+data/
+
+docs/
+tasks/
+tests/
+scratch/
+.DS_Store

@@ -1,0 +1,42 @@
+# TLS, and one hostname in front of two processes.
+#
+# The domain is read from the environment so this file names no host: a second
+# deployment is a different `PADDOCK_DOMAIN` in `.env`, not an edit here.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$PADDOCK_DOMAIN} {
+	encode zstd gzip
+
+	# The API is the product and the demo is one client of it (spec §3), so a
+	# visitor who would rather curl `/ask` can. These three paths are the whole
+	# public API surface, and none of them collides with a path Streamlit serves —
+	# it uses `/_stcore/*`, `/static/*` and `/media/*`.
+	handle /ask {
+		reverse_proxy api:8000
+	}
+	handle /coverage {
+		reverse_proxy api:8000
+	}
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	# Everything else is the demo. `reverse_proxy` upgrades WebSocket connections
+	# by itself, which Streamlit needs for `/_stcore/stream`.
+	handle {
+		reverse_proxy ui:8501
+	}
+
+	# `reverse_proxy` appends the client address to `X-Forwarded-For` rather than
+	# replacing it. That is what makes the header safe to read: a caller who sends
+	# their own value gets the real address appended after it, so the last entry is
+	# the one Caddy wrote. The API is configured for exactly one hop to match.
+
+	log {
+		output stdout
+		format console
+	}
+}

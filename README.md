@@ -46,6 +46,24 @@ make ui                # Streamlit demo  :8501
 The demo needs the `ui` extra. `make ui` installs nothing, so run
 `uv sync --extra ui` once before the first start.
 
+## Deploy it
+
+The same two services run on a laptop and on the public box. `docker-compose.yml`
+is the whole application; `docker-compose.deploy.yml` adds Caddy and the production
+settings on top.
+
+```bash
+make deploy-config     # what the two files merge into
+make image             # build for the box (linux/arm64)
+```
+
+The public demo is rate limited per address and has a daily cap on model calls. The
+cap in the Compose file is the application half; the half that cannot be evaded is a
+billing limit on the provider key, which is a step in the runbook.
+
+[`deploy/README.md`](deploy/README.md) is the runbook: ports, secrets, the corpus
+transfer, the certificate, and what to check from a phone afterwards.
+
 ## What it answers
 
 The demo states its data range and its scope on the first screen. It answers

@@ -1,10 +1,25 @@
-# Local development stack. The api and ui services join in Phase 5 (T24), when the
-# same file is what runs on the Oracle instance — local and production stay identical,
-# so anything reproducible here is reproducible there.
+# The stack, local and deployed.
+#
+# This file is the whole application: Postgres, the API and the demo. It runs as-is
+# on a laptop. `docker-compose.deploy.yml` layers Caddy and the production settings
+# on top of it for the Oracle instance, and adds nothing the local stack does not
+# already have — so anything reproducible here is reproducible there.
+#
+#   local     docker compose up
+#   deployed  docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d
+#
+# ## Every published port binds 127.0.0.1
+#
+# A published port with no address binds every interface, and the box has a public
+# IP. Postgres reachable from the internet is the whole corpus, readable by anyone
+# who guesses a password that is in this file. Binding loopback means Caddy — which
+# shares the compose network and reaches the others by service name — is the only
+# way in. The iptables rules on the box say the same thing a second time.
 
 services:
   postgres:
     image: pgvector/pgvector:pg17
+    restart: unless-stopped
     environment:
       POSTGRES_USER: paddock
       POSTGRES_PASSWORD: paddock
@@ -12,7 +27,7 @@ services:
     ports:
       # Host port 55432 to avoid colliding with other local Postgres instances.
       # Inside the compose network the port is still 5432.
-      - "55432:5432"
+      - "127.0.0.1:55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -21,5 +36,59 @@ services:
       timeout: 3s
       retries: 10
 
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://paddock:paddock@postgres:5432/paddock
+      # Nothing stands in front of the API here, so `X-Forwarded-For` is whatever a
+      # caller chose to send and the rate limiter must ignore it. The deploy file
+      # raises this to 1 for the one Caddy it adds.
+      API_TRUSTED_PROXY_HOPS: 0
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # bge-m3 is 2.2 GB, fetched on the first question. Without this volume every
+      # restart makes the next visitor wait for a download.
+      - models:/models
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # Generous: the first start installs nothing but does import torch.
+      start_period: 60s
+
+  ui:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      # A URL and not an import: the two are separate processes (spec §5).
+      UI_API_BASE_URL: http://api:8000
+    command:
+      - streamlit
+      - run
+      - app/streamlit_app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      # Behind a reverse proxy the browser's Origin is the public name, which is not
+      # the address Streamlit binds. Both of these are safe only because Caddy is the
+      # only thing that can reach this port.
+      - --server.enableCORS=false
+      - --server.enableXsrfProtection=false
+    ports:
+      - "127.0.0.1:8501:8501"
+
 volumes:
   pgdata:
+  models:

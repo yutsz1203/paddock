@@ -45,10 +45,31 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "types-beautifulsoup4",
+    # tests/unit/test_deploy_config.py reads the Compose files as data. It arrives
+    # transitively with the `agent` extra, and depending on that would make the
+    # test pass or fail according to which extras happen to be installed.
+    "pyyaml>=6.0",
+    "types-PyYAML",
 ]
 
 [project.scripts]
 paddock = "paddock.cli:app"
+
+# torch's Linux dependencies are marked `sys_platform == 'linux'` with no
+# architecture, so the ordinary PyPI wheel pulls the whole CUDA stack — several GB
+# — onto the deployment target, which is a two-core ARM box with no GPU. It does
+# not even fail loudly: `nvidia-nccl-cu13` ships an aarch64 build.
+#
+# So torch comes from PyTorch's CPU index on Linux. macOS is left on PyPI, where
+# the default wheel is already CPU-only and the CPU index has nothing to offer.
+# `explicit = true` means this index serves torch and nothing else.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

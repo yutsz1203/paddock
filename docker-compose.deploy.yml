@@ -1,0 +1,56 @@
+# What the Oracle instance adds to the base stack.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d
+#
+# Layered rather than a file of its own, so the API and the demo that run in front
+# of the public URL are the same two service definitions that run on a laptop. A
+# separate production file drifts, and the drift is only ever found in production.
+#
+# Requires two variables in `.env` on the instance:
+#
+#   PADDOCK_DOMAIN   the public name — Let's Encrypt will not issue for a bare IP
+#   ACME_EMAIL       where Let's Encrypt sends expiry warnings
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - ui
+    ports:
+      # The only two ports on this box that face the internet. 80 is not
+      # decoration: Let's Encrypt answers its HTTP-01 challenge there, and without
+      # it Caddy never gets a certificate.
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    environment:
+      PADDOCK_DOMAIN: ${PADDOCK_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificate and the account key. Losing this volume means asking Let's
+      # Encrypt for a new certificate on every restart, and they rate limit that.
+      - caddy_data:/data
+      - caddy_config:/config
+
+  api:
+    environment:
+      # One Caddy stands in front, so the rate limiter reads the last entry of
+      # `X-Forwarded-For` — the one Caddy appended, which is the real peer. This
+      # number must equal the number of proxies actually in the path. Higher and it
+      # reads an entry the caller wrote, so one header buys a fresh budget; lower
+      # and every visitor is metered as Caddy, so one of them starves the rest.
+      API_TRUSTED_PROXY_HOPS: 1
+      # Generous enough for genuine use — a visitor reading answers asks a question
+      # every few seconds at most — and low enough that one address cannot hold the
+      # two cores.
+      API_RATE_LIMIT_PER_MINUTE: 10
+      # The application half of the spend cap. The half that cannot be evaded is the
+      # billing limit on the provider key; see deploy/README.md and
+      # src/paddock/api/budget.py.
+      API_DAILY_LLM_CALL_CAP: 500
+
+volumes:
+  caddy_data:
+  caddy_config:

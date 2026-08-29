@@ -1,4 +1,4 @@
-.PHONY: help install up down db lint typecheck test test-unit test-model test-ui ui seed demo check
+.PHONY: help install up down db lint typecheck test test-unit test-model test-ui ui seed demo image deploy-config check
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -58,5 +58,18 @@ seed:  ## Rebuild the committed demo dataset from the local corpus
 # No HKJC request is made. The corpus database is not touched.
 demo:  ## Run the demo from the committed dataset
 	./scripts/demo.sh
+
+# Builds what the Oracle instance runs. `--platform` is explicit because the box is
+# aarch64 and an image built for the wrong architecture fails at `docker run`, on
+# the box, after the whole transfer.
+image:  ## Build the deployment image
+	docker build --platform linux/arm64 -t paddock:latest .
+
+# Merges the base stack with the deploy overlay and prints the result. Run it after
+# editing either file: `tests/unit/test_deploy_config.py` asserts the properties
+# that matter, and this shows what Compose actually made of them.
+deploy-config:  ## Show the merged deployment configuration
+	PADDOCK_DOMAIN=$${PADDOCK_DOMAIN:-example.invalid} ACME_EMAIL=$${ACME_EMAIL:-you@example.invalid} \
+	  docker compose -f docker-compose.yml -f docker-compose.deploy.yml config
 
 check: lint typecheck test  ## Everything
