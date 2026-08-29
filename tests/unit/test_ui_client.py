@@ -133,3 +133,31 @@ def test_a_stream_that_dies_mid_answer_is_a_readable_error() -> None:
 
     with pytest.raises(ApiError), api.ask("Did SETANTA have trouble?") as stream:
         list(stream)
+
+
+def test_a_rate_limited_question_says_how_long_to_wait() -> None:
+    """The public demo is rate limited, so this is the error a visitor is most likely
+    to meet. "refused the request (429)" tells them nothing they can act on."""
+    api = _client(
+        lambda request: httpx.Response(
+            429, json={"detail": "slow down"}, headers={"Retry-After": "37"}
+        )
+    )
+
+    with pytest.raises(ApiError) as raised:  # noqa: SIM117
+        with api.ask("Did SETANTA have trouble?") as stream:
+            list(stream)
+
+    message = str(raised.value)
+    assert "37" in message
+    assert "429" not in message
+
+
+def test_a_rate_limited_question_reads_sensibly_without_a_retry_after() -> None:
+    api = _client(lambda request: httpx.Response(429, json={"detail": "slow down"}))
+
+    with pytest.raises(ApiError) as raised:  # noqa: SIM117
+        with api.ask("Did SETANTA have trouble?") as stream:
+            list(stream)
+
+    assert "429" not in str(raised.value)

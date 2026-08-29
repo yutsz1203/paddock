@@ -10,6 +10,10 @@ the corpus arrives over `/coverage` and `/ask`.
 traceback because the API was started second, or a bare `422` because a question ran
 long, looks broken for a reason that is not its own — and the person reading it is
 usually deciding whether the project works.
+
+The refusal the public demo produces most often is 429, from the per-address
+limiter. It gets a sentence with the wait in it rather than a status code, because
+a visitor who is told to try again in forty seconds will; one shown "429" leaves.
 """
 
 from __future__ import annotations
@@ -63,7 +67,7 @@ class ApiClient:
             response = self.http.get("/coverage")
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
-            raise ApiError(self._status_message(error.response.status_code)) from error
+            raise ApiError(self._status_message(error.response)) from error
         except httpx.HTTPError as error:
             raise ApiError(self._unreachable_message()) from error
 
@@ -90,7 +94,7 @@ class ApiClient:
             with self.http.stream("POST", "/ask", json={"question": question}) as response:
                 if response.status_code != httpx.codes.OK:
                     response.read()
-                    raise ApiError(self._status_message(response.status_code))
+                    raise ApiError(self._status_message(response))
                 yield AnswerStream(parse_sse(response.iter_lines()))
         except httpx.HTTPError as error:
             raise ApiError(self._unreachable_message()) from error
@@ -98,8 +102,22 @@ class ApiClient:
     def _unreachable_message(self) -> str:
         return f"The API at {self.http.base_url} did not answer. Is it running?"
 
-    def _status_message(self, status: int) -> str:
-        return f"The API at {self.http.base_url} refused the request ({status})."
+    def _status_message(self, response: httpx.Response) -> str:
+        if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
+            return _rate_limited_message(response.headers.get("Retry-After"))
+        return f"The API at {self.http.base_url} refused the request ({response.status_code})."
+
+
+def _rate_limited_message(retry_after: str | None) -> str:
+    """The one refusal a visitor is likely to meet, so it gets its own sentence.
+
+    The demo is rate limited per address, and "refused the request (429)" names a
+    status code the reader cannot act on. `Retry-After` is whole seconds when the
+    API sends it, and the API always does — but a proxy in between can drop a
+    header, so the message still has to make sense without it.
+    """
+    wait = f" Try again in {retry_after} seconds." if retry_after else " Try again shortly."
+    return "Too many questions from this address." + wait
 
 
 def _as_date(value: str | None) -> dt.date | None:

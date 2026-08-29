@@ -69,8 +69,15 @@ class Settings(BaseSettings):
     langfuse_host: str = "https://cloud.langfuse.com"
 
     # ── API ─────────────────────────────────────────────────────────────────────
+    # Two different guards. The first paces one caller so nobody starves the rest;
+    # the second bounds total spend however many callers there are.
     api_rate_limit_per_minute: int = 10
     api_daily_llm_call_cap: int = 500
+
+    # How many reverse proxies stand in front of the API. Zero — the local default
+    # — makes the limiter ignore `X-Forwarded-For`, which is caller-supplied. The
+    # deployed stack runs one Caddy, so it sets 1.
+    api_trusted_proxy_hops: int = 0
 
     # ── UI ──────────────────────────────────────────────────────────────────────
     # Where the Streamlit demo looks for the API. The two are separate processes

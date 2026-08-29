@@ -12,6 +12,14 @@ properties is to enforce sentence by sentence and release each one as it passes,
 which is worth doing when there is an eval to show it does not change groundedness
 (T16). Until then the guarantee wins over the latency.
 
+## Two guards stand in front of the model, and both answer differently
+
+`enforce_rate_limit` runs before the handler, so it refuses with 429 and a
+`Retry-After`. Anything that fails once the stream has started cannot use a status
+code — the 200 went out with the first byte — so it becomes an `error` event
+instead. Which mechanism a guard uses is decided by where it can run, not by how
+serious it is.
+
 ## Event protocol
 
 ``token`` (repeatedly) → ``sources`` (once) → ``done`` (once). A refusal uses the
@@ -28,10 +36,11 @@ from collections.abc import Iterator
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from paddock.agent.graph import answer_question
+from paddock.api.ratelimit import RateLimiter, client_key
 from paddock.api.schemas import AskRequest, CoverageOut, SourceOut
 from paddock.db.coverage import corpus_coverage
 from paddock.db.session import session_scope
@@ -62,6 +71,39 @@ def get_embedder_dependency(request: Request) -> Embedder:
     return getattr(request.app.state, "embedder", None) or get_embedder()
 
 
+def enforce_rate_limit(request: Request) -> None:
+    """Refuse `/ask` when one caller is asking too fast.
+
+    Raises:
+        HTTPException: 429, with `Retry-After` in whole seconds.
+
+    A dependency rather than a check inside `_stream`, so a refused request never
+    opens a database session, never loads the embedding model and never reaches a
+    metered key. It is also why the refusal can be a status code at all: once
+    `_stream` has yielded its first byte the 200 is already sent, and an error can
+    only be an event.
+
+    `/health` and `/coverage` are deliberately not limited. Neither costs a model
+    call, and a liveness probe that trips the limiter restarts a healthy container.
+    """
+    limiter: RateLimiter | None = getattr(request.app.state, "rate_limiter", None)
+    if limiter is None:
+        return
+
+    hops = getattr(request.app.state, "trusted_proxy_hops", 0)
+    key = client_key(request, trusted_proxy_hops=hops)
+    retry_after = limiter.check(key)
+    if retry_after is None:
+        return
+
+    log.info("rate_limited", client=key, retry_after_s=retry_after)
+    raise HTTPException(
+        status_code=429,
+        detail=(f"Too many questions from this address. Try again in {retry_after} seconds."),
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     """Liveness only.
@@ -85,7 +127,7 @@ def coverage() -> CoverageOut:
         return CoverageOut(**vars(corpus_coverage(session)))
 
 
-@router.post("/ask")
+@router.post("/ask", dependencies=[Depends(enforce_rate_limit)])
 def ask(
     body: AskRequest,
     llm: Annotated[LLM | None, Depends(get_llm_dependency)],
