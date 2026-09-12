@@ -1,0 +1,1 @@
+SELECT * FROM scratch.sf_figure

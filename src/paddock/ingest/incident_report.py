@@ -38,10 +38,10 @@ from dataclasses import dataclass
 from bs4 import BeautifulSoup, Tag
 
 from paddock.ingest.entities import normalise_person_name, parse_horse_id, parse_weight_claim
+from paddock.ingest.values import parse_race_class
 
 # "Race:1 (634) FWD INSURANCE ACT PRIVATE HANDICAP (Sec2) Class 4 1200 m"
 _RACE_NO = re.compile(r"Race:\s*(\d+)")
-_RACE_CLASS = re.compile(r"\b(Class\s+\d+|Group\s+(?:One|Two|Three)|Griffin|Restricted)\b", re.I)
 _DISTANCE = re.compile(r"\b(\d{3,4})\s*m\b", re.I)
 # "MATZDEN (L133)", and occasionally "BEAR CHAMP (AJ313)" — a brand carrying a
 # leading letter that the horse's own link and silks image both omit. The trailing
@@ -99,6 +99,10 @@ class MeetingReport:
     """'ST' or 'HV', read from the going table. None when the page carried no going
     table at all — see `_parse_racecourse` for why that is not guessed at."""
     races: list[RaceReport]
+    legacy: bool = False
+    """True for the markup HKJC served until early October 2023. That report has no
+    runner rows — each race is a heading and one paragraph of prose — so its races
+    carry no runners, and ingestion builds them from the results pages instead."""
 
 
 class ReportParseError(RuntimeError):
@@ -115,15 +119,57 @@ def parse_meeting_report(html: str, race_date: dt.date) -> MeetingReport:
             cannot be accidentally skipped by calling the parser directly.
 
     Raises:
-        ReportParseError: no race tables were found.
+        ReportParseError: neither race tables nor the older markup's race headings
+            were found.
     """
     soup = BeautifulSoup(html, "lxml")
     tables = soup.select("table.rirr")
-    if not tables:
-        raise ReportParseError("no table.rirr elements — markup may have changed")
+    if tables:
+        races = [_parse_race(table) for table in tables]
+        return MeetingReport(race_date=race_date, racecourse=_parse_racecourse(soup), races=races)
 
-    races = [_parse_race(table) for table in tables]
-    return MeetingReport(race_date=race_date, racecourse=_parse_racecourse(soup), races=races)
+    headings = soup.select("div.race p.moreClum")
+    if headings:
+        return _parse_legacy_report(soup, headings, race_date)
+
+    raise ReportParseError("no table.rirr elements — markup may have changed")
+
+
+def _parse_legacy_report(
+    soup: BeautifulSoup, headings: list[Tag], race_date: dt.date
+) -> MeetingReport:
+    """The card from the older markup: race headings only, no runner rows.
+
+    The stewards' prose is not split into per-horse comments here. It names horses in
+    free text, often several to a sentence, and a comment filed under the wrong horse
+    is worse than no comment — the absence of one already means a clean run.
+    """
+    races = []
+    for heading in headings:
+        race_no, name, race_class, distance_m = _parse_race_header(
+            heading.get_text(" ", strip=True)
+        )
+        races.append(
+            RaceReport(
+                race_no=race_no,
+                name=name,
+                race_class=race_class,
+                distance_m=distance_m,
+                runners=[],
+            )
+        )
+    return MeetingReport(
+        race_date=race_date, racecourse=_legacy_racecourse(soup), races=races, legacy=True
+    )
+
+
+def _legacy_racecourse(soup: BeautifulSoup) -> str | None:
+    """The venue from the older markup's info block: '01/01/2023 - Sha Tin'."""
+    line = soup.select_one("div.info p")
+    if line is None:
+        return None
+    match = _VENUE.search(line.get_text(" ", strip=True))
+    return _RACECOURSE_CODES[match.group(0)] if match else None
 
 
 def _parse_racecourse(soup: BeautifulSoup) -> str | None:
@@ -177,13 +223,12 @@ def _parse_race_header(header: str) -> tuple[int, str | None, str | None, int | 
         raise ReportParseError(f"could not read a race number from {header!r}")
     race_no = int(match.group(1))
 
-    class_match = _RACE_CLASS.search(header)
     distance_match = _DISTANCE.search(header)
 
     return (
         race_no,
         _race_name(header),
-        class_match.group(1) if class_match else None,
+        parse_race_class(header),
         int(distance_match.group(1)) if distance_match else None,
     )
 

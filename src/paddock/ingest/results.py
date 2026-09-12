@@ -37,12 +37,12 @@ from paddock.ingest.values import (
     as_int,
     parse_finish_time,
     parse_margin,
+    parse_race_class,
     parse_running_positions,
     split_name_and_brand,
 )
 
 _RACE_NO = re.compile(r"RACE\s*(\d+)", re.I)
-_CLASS = re.compile(r"\b(Class\s+\d+|Group\s+(?:One|Two|Three)|Griffin|Restricted)\b", re.I)
 _DISTANCE = re.compile(r"\b(\d{3,4})\s*M\b", re.I)
 _PRIZE = re.compile(r"HK\$\s*([\d,]+)")
 _COURSE = re.compile(r'(TURF|ALL\s*WEATHER)\s*(?:-\s*"([^"]+)"\s*Course)?', re.I)
@@ -187,7 +187,7 @@ def _parse_header(table: Tag) -> RaceHeader:
 
         if race_no is None and (match := _RACE_NO.search(cells[0])):
             race_no = int(match.group(1))
-        if _CLASS.search(cells[0]) or _DISTANCE.search(cells[0]):
+        if parse_race_class(cells[0]) or _DISTANCE.search(cells[0]):
             class_distance = cells[0]
         if label == "going":
             going = value or None
@@ -200,14 +200,13 @@ def _parse_header(table: Tag) -> RaceHeader:
     if race_no is None:
         raise ResultsParseError("no race number in header")
 
-    class_match = _CLASS.search(class_distance)
     distance_match = _DISTANCE.search(class_distance)
     course_match = _COURSE.search(course_text or "")
 
     return RaceHeader(
         race_no=race_no,
         name=re.sub(r"\s+", " ", name).strip() if name else None,
-        race_class=class_match.group(1) if class_match else None,
+        race_class=parse_race_class(class_distance),
         distance_m=int(distance_match.group(1)) if distance_match else None,
         going=going,
         track=course_match.group(1).upper().replace(" ", "") if course_match else None,

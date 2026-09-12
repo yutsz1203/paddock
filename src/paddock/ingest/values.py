@@ -1,13 +1,24 @@
 """Conversions for the value formats HKJC uses across pages.
 
-Shared by the results and sectional parsers because the same formats appear on
-both, and because a margin or a finish time parsed two different ways would be a
-silent data inconsistency rather than a visible bug.
+Shared by the results, sectional and incident-report parsers because the same
+formats appear on all of them, and because a margin or a finish time parsed two
+different ways would be a silent data inconsistency rather than a visible bug.
 """
 
 from __future__ import annotations
 
 import re
+
+# "Class 4", "Group One", "Griffin". HKJC sometimes capitalises the whole word
+# ("CLASS 3"), so the match ignores case and the stored value does not: a GROUP BY
+# on race_class must not split one class into two cells.
+_RACE_CLASS = re.compile(
+    r"\b(Class\s+\d+|Group\s+(?:One|Two|Three)|Griffin|Restricted|4\s*Years?\s*Olds?)\b", re.I
+)
+
+# The four-year-old series (Classic Mile, Classic Cup, Derby) names no class at all:
+# its header reads "4 Year Olds" where a handicap's reads "Class 4".
+_FOUR_YEAR_OLDS = re.compile(r"^4\s*Years?\s*Olds?$", re.I)
 
 # "MATZDEN (L133)", sometimes with a non-breaking space before the bracket, and
 # occasionally with a leading letter the horse's own link omits ("BEAR CHAMP (AJ313)"
@@ -42,6 +53,17 @@ def split_name_and_brand(cell: str) -> tuple[str, str]:
     if match is None:
         raise ValueError(f"no brand number in {cell!r}")
     return match.group(1).strip(), match.group(3)
+
+
+def parse_race_class(text: str) -> str | None:
+    """'CLASS 3' -> 'Class 3', '4 Year Olds' -> '4YO'. None when no class is named."""
+    match = _RACE_CLASS.search(text)
+    if match is None:
+        return None
+    value = " ".join(match.group(1).split())
+    if _FOUR_YEAR_OLDS.match(value):
+        return "4YO"
+    return value.title()
 
 
 def parse_finish_time(cell: str) -> float | None:

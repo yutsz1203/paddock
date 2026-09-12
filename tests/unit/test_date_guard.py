@@ -77,3 +77,30 @@ def test_missing_header_raises_rather_than_guessing() -> None:
     """
     with pytest.raises(MeetingHeaderMissingError):
         parse_declared_meeting("<html><body>no meeting header here</body></html>")
+
+
+# ── The older markup (until early October 2023) ────────────────────────────────
+
+
+def test_older_markup_states_its_date_in_the_info_block() -> None:
+    """No 'Race Meeting:' header before October 2023 — only '01/01/2023 - Sha Tin'."""
+    html = load("report_20230101_legacy.html")
+
+    assert parse_declared_meeting(html) == dt.date(2023, 1, 1)
+    assert is_genuine(html, dt.date(2023, 1, 1))
+    assert not is_genuine(html, dt.date(2023, 1, 2))
+
+
+def test_the_header_wins_over_an_older_style_line() -> None:
+    """A fallback for an old date is served in today's markup. Its own header must
+    decide, so no stray older-style line can make a substituted page look genuine."""
+    html = load("report_20260423_fallback.html") + (
+        '<div class="f_clear info"><div><p>23/04/2026 - Sha Tin</p></div></div>'
+    )
+
+    assert parse_declared_meeting(html) == dt.date(2026, 7, 15)
+
+
+def test_an_older_style_line_without_a_venue_is_not_a_header() -> None:
+    with pytest.raises(MeetingHeaderMissingError):
+        parse_declared_meeting('<div class="info"><p>Updated 01/01/2023</p></div>')

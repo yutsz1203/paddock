@@ -45,6 +45,10 @@ never scheduled.
 
 Typed from the published PDFs, then checked against the totals each sheet prints for
 itself — 88 meetings for both seasons, split 51/37 in 2024-25 and 52/36 in 2025-26.
+The 2022-23 and 2023-24 sheets (18 July 2022, 25 July 2023) are the originals, not
+amendments: 88 meetings each, 48 at Sha Tin and 40 at Happy Valley. So a meeting
+abandoned later is not marked in them. 8 October 2023 at Sha Tin is one: it is on the
+sheet, and HKJC's report page for it is empty.
 `test_racing_calendar.py` re-asserts all of them, so a mis-keyed row fails the suite
 rather than quietly becoming the thing everything else is measured against. For
 2025-26 there is a stronger check available and it is used: the transcription is

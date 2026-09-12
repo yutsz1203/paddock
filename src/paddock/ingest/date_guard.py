@@ -25,6 +25,19 @@ for (comparing parsed runners against the results page). The page already tells 
 what it is; asking it directly needs no second request and no dependency on any
 other parser. If HKJC ever removes the header, `parse_declared_meeting` raises
 rather than guessing, and the fallback to a cross-source check is a known option.
+
+## Two forms of the header
+
+Until early October 2023 HKJC served the report in an older markup with no "Race
+Meeting:" header. That page states its date in the first line of its info block
+instead::
+
+    01/01/2023 - Sha Tin
+
+The guard reads that line only when the header is absent. It stays safe because a
+fallback is always served in the *current* markup: a request for a 2023 date with no
+meeting returns today's newest meeting, header and all, so the header is found, the
+dates differ, and the page is rejected as before.
 """
 
 from __future__ import annotations
@@ -36,6 +49,10 @@ from bs4 import BeautifulSoup
 
 # "Race Meeting: 26/04/2026 (Sun)" — the venue sometimes follows, so this is not anchored.
 _MEETING_HEADER = re.compile(r"Race\s*Meeting:\s*(\d{2})/(\d{2})/(\d{4})", re.IGNORECASE)
+
+# "01/01/2023 - Sha Tin" — the older markup's info block. Anchored and venue-bound,
+# so a date anywhere else in that block cannot be mistaken for the meeting's.
+_LEGACY_MEETING_LINE = re.compile(r"^(\d{2})/(\d{2})/(\d{4})\s*-\s*(?:Sha Tin|Happy Valley)\b")
 
 
 class MeetingHeaderMissingError(RuntimeError):
@@ -58,10 +75,15 @@ def parse_declared_meeting(html: str) -> dt.date:
     """Return the meeting date the page says it is showing.
 
     Raises:
-        MeetingHeaderMissingError: the header is absent, so the page cannot be trusted.
+        MeetingHeaderMissingError: neither form of the header is present, so the page
+            cannot be trusted.
     """
-    text = BeautifulSoup(html, "lxml").get_text(" ", strip=True)
-    match = _MEETING_HEADER.search(text)
+    soup = BeautifulSoup(html, "lxml")
+    match = _MEETING_HEADER.search(soup.get_text(" ", strip=True))
+    if match is None:
+        # The older markup — see "Two forms of the header" in the module docstring.
+        line = soup.select_one("div.info p")
+        match = _LEGACY_MEETING_LINE.match(line.get_text(" ", strip=True)) if line else None
     if match is None:
         raise MeetingHeaderMissingError(
             "no 'Race Meeting: DD/MM/YYYY' header found; HKJC markup may have changed"

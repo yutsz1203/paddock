@@ -9,9 +9,9 @@ a venue split), and all of them are re-asserted below. That is what turns "typed
 carefully" into "checked".
 
 **Prove that Hong Kong does not race on a fixed weekday.** The candidate generator
-originally yielded Wednesdays, Saturdays and Sundays. Between them these three seasons
-have fifteen meetings on none of those days — four, then five, then six, so the
-assumption is getting worse rather than better. That is why `candidate_dates` now
+originally yielded Wednesdays, Saturdays and Sundays. Between them these five seasons
+have twenty-three meetings on none of those days — two, six, four, five and six — so
+no season since 2022-23 has fitted the assumption. That is why `candidate_dates` now
 yields every day; see `test_every_published_meeting_is_reachable`.
 
 **Cross-check HKJC against HKJC.** For 2025-26 there are two independent statements
@@ -37,6 +37,8 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "html"
 # Season, and the SUMMARY OF FIXTURES the sheet prints for itself. The totals count
 # meetings that ran, so 2025-26's 88 excludes the abandoned one.
 SEASONS = [
+    ("2022-23", 88, {"ST": 48, "HV": 40}),
+    ("2023-24", 88, {"ST": 48, "HV": 40}),
     ("2024-25", 88, {"ST": 51, "HV": 37}),
     ("2025-26", 88, {"ST": 52, "HV": 36}),
     ("2026-27", 88, {"ST": 49, "HV": 39}),
@@ -143,6 +145,20 @@ def test_the_index_lists_only_meetings_that_ran() -> None:
 
 
 OFF_SCHEDULE = {
+    # Third day of Lunar New Year, and a Thursday night at Happy Valley.
+    "2022-23": [
+        dt.date(2023, 1, 24),
+        dt.date(2023, 4, 6),
+    ],
+    # New Year's Day and Chinese New Year on Mondays, the rest Thursday nights.
+    "2023-24": [
+        dt.date(2024, 1, 1),
+        dt.date(2024, 1, 4),
+        dt.date(2024, 2, 12),
+        dt.date(2024, 2, 15),
+        dt.date(2024, 7, 1),
+        dt.date(2024, 7, 4),
+    ],
     # National Day, Boxing Day, third day of Lunar New Year, HKSAR Establishment Day.
     "2024-25": [
         dt.date(2024, 10, 1),

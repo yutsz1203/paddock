@@ -297,3 +297,24 @@ def test_a_prefixed_brand_number_is_reduced_to_the_canonical_brand() -> None:
     assert runner.brand_no == "J313"
     assert runner.horse_id == "HK_2023_J313"
     assert runner.horse_id.endswith(runner.brand_no)
+
+
+# ── The older markup (until early October 2023) ────────────────────────────────
+
+
+def test_older_markup_yields_the_card_without_runners() -> None:
+    """Each race is a heading and a paragraph of prose, with no runner rows. The card
+    is still read; the runners come from the results pages at ingest."""
+    report = parse_meeting_report(load("report_20230101_legacy.html"), dt.date(2023, 1, 1))
+
+    assert report.legacy
+    assert report.racecourse == "ST"
+    assert [r.race_no for r in report.races] == list(range(1, 12))
+    first = report.races[0]
+    assert (first.name, first.race_class, first.distance_m) == ("YEW HANDICAP", "Class 5", 1400)
+    assert report.races[7].race_class == "Group Three"
+    assert all(not race.runners for race in report.races)
+
+
+def test_the_current_markup_is_not_legacy(current_season) -> None:  # type: ignore[no-untyped-def]
+    assert current_season.legacy is False

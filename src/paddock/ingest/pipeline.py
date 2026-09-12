@@ -29,6 +29,14 @@ first. That holds the transaction open for the length of the fetches — 22 requ
 writer with no contention, and it is what makes "failed half-way" a real state to
 test rather than an artifact of doing all the reads before all the writes. The pages
 themselves are committed independently, so nothing fetched is lost to the rollback.
+
+## Meetings before October 2023
+
+HKJC served the report in an older markup until early October 2023, with the card
+but no runner rows (`MeetingReport.legacy`). For those meetings the runners come from
+the results pages instead, which carry every column the report row would except the
+stewards' comment and the apprentice's claim. So they are stored with results and
+sectionals, no comments, and a `jockey_claim` of 0 that means "not published here".
 """
 
 from __future__ import annotations
@@ -44,7 +52,12 @@ from sqlalchemy.orm import Session
 from paddock.db.models import IncidentComment, IngestRun, Meeting, Race, Runner
 from paddock.db.session import session_scope
 from paddock.ingest.date_guard import FallbackDetectedError, require_genuine
-from paddock.ingest.entities import resolve_horse, resolve_jockey, resolve_trainer
+from paddock.ingest.entities import (
+    normalise_person_name,
+    resolve_horse,
+    resolve_jockey,
+    resolve_trainer,
+)
 from paddock.ingest.incident_report import (
     RaceReport,
     ReportParseError,
@@ -149,6 +162,7 @@ def ingest_meeting(
                 race_date=race_date,
                 racecourse=course,
                 report_races=report.races,
+                runners_from_results=report.legacy,
                 source_url=report_page.url,
                 fetched_at=report_page.fetched_at,
                 refresh=refresh,
@@ -162,11 +176,17 @@ def _write_meeting(
     race_date: dt.date,
     racecourse: str,
     report_races: list[RaceReport],
+    runners_from_results: bool,
     source_url: str,
     fetched_at: dt.datetime,
     refresh: bool,
 ) -> MeetingIngest:
-    """The whole meeting, in one transaction. Any exception leaves nothing behind."""
+    """The whole meeting, in one transaction. Any exception leaves nothing behind.
+
+    Args:
+        runners_from_results: the report had no runner rows (the older markup), so
+            each race's runners are built from its results page.
+    """
     results: dict[int, RaceResults] = {}
     sectionals: dict[int, list[RunnerSectionals]] = {}
     missing: list[int] = []
@@ -208,7 +228,11 @@ def _write_meeting(
         by_horse = {r.horse_id: r for r in result.runners if r.horse_id} if result else {}
         by_brand = {s.brand_no: s for s in sectionals.get(race.race_no, [])}
 
-        for runner in race.runners:
+        card = race.runners
+        if runners_from_results:
+            card = [_runner_from_result(r) for r in result.runners] if result else []
+
+        for runner in card:
             written = _upsert_runner(
                 session,
                 race_id=race_id,
@@ -230,6 +254,32 @@ def _write_meeting(
         runners=runners,
         comments=comments,
         races_without_results=missing,
+    )
+
+
+def _runner_from_result(result: ResultRunner) -> RunnerReport:
+    """A report line built from the results page, for a report with no runner rows.
+
+    The results page has every column the report row has except two: the comment,
+    and the apprentice's claim. The report writes a claiming rider as "H Y Yuen (-10)";
+    the results page writes "H Y Yuen". So the claim is unknown for these meetings.
+
+    It is stored as 0 because the column is not nullable, which reads as a senior
+    rider. Nothing derived from it is wrong for that: `carried_weight_lb` comes from
+    the results page and is already net of the claim.
+    """
+    return RunnerReport(
+        horse_name=result.horse_name,
+        brand_no=result.brand_no,
+        horse_id=result.horse_id,
+        horse_no=result.horse_no,
+        draw=result.draw,
+        jockey=normalise_person_name(result.jockey),
+        jockey_claim=0,
+        finish_pos=result.finish_pos,
+        dead_heat=result.dead_heat,
+        finished=result.finished,
+        comment=None,
     )
 
 
